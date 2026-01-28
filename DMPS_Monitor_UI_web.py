@@ -120,7 +120,7 @@ st.subheader("📈 Trial Decision Corridors")
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
 succ_line.append(s_req if s_req <= lp else None) # Hide success line if impossible
-    fut_line.append(max(0, f_req)) # Don't show -1 on the chart
+     fut_line.append(max(0, f_req)) # Don't show -1 on the chart
 
 for lp in viz_n:
     # Success: Smallest S where confidence > requirement
@@ -254,6 +254,7 @@ if st.button("📥 Export Audit-Ready Snapshot"):
         "Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "Rules Followed"],
         "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", rules_summary]
     }
+
 
 
 
