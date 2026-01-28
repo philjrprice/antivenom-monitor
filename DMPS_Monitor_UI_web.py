@@ -9,8 +9,8 @@ st.set_page_config(page_title="Universal Trial Monitor: Hybrid", layout="wide")
 st.sidebar.header("📋 Current Trial Data")
 max_n_val = st.sidebar.number_input("Maximum Sample Size (N)", 10, 500, 70)
 total_n = st.sidebar.number_input("Total Patients Enrolled", 0, max_n_val, 20)
-successes = st.sidebar.number_input("Total Successes", 0, total_n, 14)
-saes = st.sidebar.number_input("Serious Adverse Events (SAEs)", 0, total_n, 1)
+successes = st.sidebar.number_input("Total Successes", 0, total_n, value=min(6, total_n))
+saes = st.sidebar.number_input("Serious Adverse Events (SAEs)", 0, total_n, value=min(1, total_n))
 
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Study Parameters")
@@ -160,4 +160,5 @@ for i, (name, ap, bp) in enumerate(priors_list):
     with cols[i]:
         st.info(f"**{name}**")
         st.write(f"P(>Target): {(1 - beta.cdf(target_eff, ae_s, be_s)):.1%}")
+
 
