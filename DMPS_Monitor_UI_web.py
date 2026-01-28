@@ -16,9 +16,10 @@ saes = st.sidebar.number_input("Serious Adverse Events (SAEs)", 0, total_n, valu
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Study Parameters")
 
-with st.sidebar.expander("Base Study Priors", expanded=False):
-    prior_alpha = st.number_input("Prior Successes (Alpha)", 0.1, 10.0, 1.0)
-    prior_beta = st.number_input("Prior Failures (Beta)", 0.1, 10.0, 1.0)
+with st.sidebar.expander("Base Study Priors", expanded=True):
+    # UPDATED: Changed to sliders for a more "Universal Tool" feel
+    prior_alpha = st.sidebar.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1, help="Virtual successes before trial data.")
+    prior_beta = st.sidebar.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1, help="Virtual failures before trial data.")
 
 with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
     min_interim = st.number_input("Min N before first check", 1, max_n_val, 14)
@@ -129,12 +130,12 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.markdown("**Safety Summary**")
         st.write(f"Mean Toxicity: {safe_mean:.1%}")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
-    with c3:
+    with col3:
         st.markdown("**Operational Info**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
-        st.write(f"Prior Strength: {prior_alpha + prior_beta} pts")
+        st.write(f"Prior Strength: {prior_alpha + prior_beta:.1f} pts")
 
-# Sensitivity Analysis (UPDATED SECTION)
+# Sensitivity Analysis
 st.subheader("🧪 Sensitivity Analysis")
 
 priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (f"Skeptical (1:{skp_p})", 1, skp_p)]
@@ -150,11 +151,9 @@ for i, (name, ap, bp) in enumerate(priors_list):
     target_probs.append(p_t_s)
     with cols[i]:
         st.info(f"**{name}**")
-        # Added readout for Null and Goal alongside Target
         st.write(f"Prob > Null: {p_n_s:.1%}")
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
         st.write(f"Prob > Goal: {p_g_s:.1%}")
 
-# Sensitivity interpretation logic
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance between prior mindsets).")
