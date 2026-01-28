@@ -15,16 +15,18 @@ saes = st.sidebar.number_input("Serious Adverse Events (SAEs)", 0, total_n, 1)
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Study Parameters")
 
-# RESTORED: Base Study Priors
+# Base Study Priors
 with st.sidebar.expander("Base Study Priors", expanded=False):
     st.write("Set the 'Starting Belief' for this trial:")
     prior_alpha = st.number_input("Prior Successes (Alpha)", 0.1, 10.0, 1.0, help="Higher values mean a stronger initial belief in efficacy.")
     prior_beta = st.number_input("Prior Failures (Beta)", 0.1, 10.0, 1.0, help="Higher values mean a more skeptical starting point.")
 
+# Adaptive Timing & Look Points
 with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
-    min_interim = st.number_input("Min N before first check", 1, max_n_val, 14)
-    check_cohort = st.number_input("Check every X patients (Cohort)", 1, 20, 5)
+    min_interim = st.number_input("Min N before first check", 1, max_n_val, 14, help="Trial must reach this N before efficacy/futility rules activate.")
+    check_cohort = st.number_input("Check every X patients (Cohort)", 1, 20, 5, help="Interval for interim analysis after Min N is met.")
 
+# Success & Futility Rules
 with st.sidebar.expander("Success & Futility Rules"):
     target_eff = st.slider("Target Efficacy (%)", 0.1, 1.0, 0.60)
     null_eff = st.slider("Null Efficacy (%)", 0.1, 1.0, 0.50)
@@ -32,17 +34,19 @@ with st.sidebar.expander("Success & Futility Rules"):
     success_conf_req = st.slider("Success Confidence Req.", 0.5, 0.99, 0.74)
     bpp_futility_limit = st.slider("BPP Futility Limit", 0.01, 0.20, 0.05)
 
-with st.sidebar.expander("Safety Rules"):
-    safe_limit = st.slider("SAE Upper Limit (%)", 0.05, 0.50, 0.15)
-    safe_conf_req = st.sidebar.slider("Safety Stop Confidence", 0.5, 0.99, 0.90)
+# Safety Rules
+with st.sidebar.expander("Safety Rules", expanded=True):
+    safe_limit = st.slider("SAE Upper Limit (%)", 0.05, 0.50, 0.15, help="Maximum allowable toxicity rate.")
+    safe_conf_req = st.slider("Safety Stop Confidence", 0.5, 0.99, 0.90, help="Confidence required to trigger a safety stop.")
 
+# Sensitivity Prior Settings
 with st.sidebar.expander("Sensitivity Prior Settings"):
     opt_p = st.slider("Optimistic Prior Weight", 1, 10, 4)
     skp_p = st.slider("Skeptical Prior Weight", 1, 10, 4)
 
 # --- MATH ENGINE ---
 def get_bpp(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
-    """Forecasts trial success using the specified priors"""
+    """Forecasts trial success using specified priors."""
     rem_n = m_n - curr_n
     if rem_n <= 0:
         return 1.0 if (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf else 0.0
@@ -83,7 +87,7 @@ m6.metric("BPP (Forecast)", f"{bpp:.1%}")
 # Decision Status
 st.markdown("---")
 if p_toxic > safe_conf_req:
-    st.error(f"🚨 **CRITICAL SAFETY STOP:** Prob. Toxicity ({p_toxic:.1%}) exceeds limit.")
+    st.error(f"🚨 **CRITICAL SAFETY STOP:** Prob. Toxicity ({p_toxic:.1%}) exceeds the {safe_conf_req:.1%} confidence limit.")
 elif is_look_point:
     if bpp < bpp_futility_limit:
         st.warning(f"🛑 **STOP: FUTILITY TRIGGERED:** Forecast ({bpp:.1%}) below limit at N={total_n}.")
@@ -141,7 +145,7 @@ cols = st.columns(3)
 target_probs = []
 for i, (name, ap, bp) in enumerate(priors_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
-    as_s, bs_s = bp + saes, ap + (total_n - saes) # Safety sensitivity flip
+    as_s, bs_s = bp + saes, ap + (total_n - saes)
     p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
     target_probs.append(p_t_s)
     with cols[i]:
