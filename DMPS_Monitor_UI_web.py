@@ -279,17 +279,26 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Mean Toxicity: **{safe_mean:.1%}**") 
         st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**") 
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
-        if st.button("Calculate Sequential Type I Error"):
-            np.random.seed(42)
-            fp_count = 0
-            for _ in range(1000):
-                trial_outcomes = np.random.binomial(1, null_eff, max_n_val)
-                for lp in look_points:
-                    s = sum(trial_outcomes[:lp])
-                    if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > success_conf_req:
-                        fp_count += 1
-                        break
-            st.warning(f"Estimated Sequential Type I Error: **{fp_count/1000:.1%}**")
+        # DYNAMIC TYPE I ERROR SIMULATION
+        num_sims = 10000  # Set this to whatever number you like
+        if st.button(f"Calculate Sequential Type I Error ({num_sims} sims)"):
+            with st.spinner(f"Simulating {num_sims} trials..."):
+                np.random.seed(42)
+                fp_count = 0
+                for _ in range(num_sims):
+                    # Simulate a trial where the drug only performs at the NULL rate
+                    trial_outcomes = np.random.binomial(1, null_eff, max_n_val)
+                    for lp in look_points:
+                        s = sum(trial_outcomes[:lp])
+                        # Check if we accidentally declare success
+                        if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > success_conf_req:
+                            fp_count += 1
+                            break # Trial stops here; count as False Positive
+                
+                # Dynamic calculation using the num_sims variable
+                type_i_estimate = fp_count / num_sims
+                st.warning(f"Estimated Sequential Type I Error: **{type_i_estimate:.2%}**")
+                st.caption(f"Based on {num_sims:,} Monte Carlo iterations.")
     with c3:
         st.markdown("**Operational Info**")
         st.write(f"BPP Success Forecast: **{bpp:.1%}**")
@@ -384,6 +393,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
 
 
 
