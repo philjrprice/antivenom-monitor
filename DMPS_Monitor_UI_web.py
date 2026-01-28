@@ -169,7 +169,7 @@ evidence_shift = p_target / skep_prob if skep_prob > 0 else 1.0
 # ==========================================
 # 4. MAIN DASHBOARD LAYOUT
 # ==========================================
-st.title("🛡️ Hybrid Antivenom Trial Monitor: Airtight Pro")
+st.title("🛡️ AVF - Single Arm Bayesian Trial Monitor")
 
 # TOP ROW METRICS (Added Help Tooltips)
 m1, m2, m3, m4, m5, m6 = st.columns(6)
@@ -402,6 +402,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
 
 
 
