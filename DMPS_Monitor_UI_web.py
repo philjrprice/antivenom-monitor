@@ -119,8 +119,7 @@ else:
 st.subheader("📈 Trial Decision Corridors")
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
-succ_line
-fut_line.append(max(0, f_req))
+succ_line, fut_line = [], []
 
 for lp in viz_n:
     # Success: Smallest S where confidence > requirement
@@ -219,10 +218,9 @@ for i, (name, ap, bp) in enumerate(priors_list):
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** ({spread:.1%} variance between prior mindsets).")
 
-
 with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
     boundary_data = []
-    # FIX 1: Corrected indentation for the for-loop
+    # Ensure this 'for' loop is indented 4 spaces from the 'with' statement
     for lp in look_points:
         if lp <= total_n: 
             continue
@@ -230,7 +228,7 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         # Success threshold
         s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
         
-        # Futility threshold: Highest S that triggers a stop
+        # Futility threshold refinement: Highest S that triggers a stop
         f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] <= bpp_futility_limit), -1)
         
         # Safety threshold
@@ -238,39 +236,23 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         
         boundary_data.append({
             "N": lp, 
-            "Success Stop S ≥": s_req, 
-            "Futility Stop S ≤": f_req if f_req != -1 else "No Stop", 
-            "Safety Stop SAEs ≥": safe_req
+            "Success S ≥": s_req, 
+            "Futility S ≤": f_req if f_req != -1 else "No Stop", 
+            "Safety SAEs ≥": safe_req
         })
     
-
+    # CRITICAL FIX: Move these lines OUTSIDE the for-loop so they only run once
     if boundary_data: 
         st.table(pd.DataFrame(boundary_data))
     else: 
         st.write("Trial is at the final analysis point.")
 
-
 if st.button("📥 Export Audit-Ready Snapshot"):
-    # Convert boundary table to a string for the audit record
-    rules_summary = str(boundary_data) if boundary_data else "Final Analysis Point"
-    
-    report_data = {
-        "Metric": [
-            "Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", 
-            "Prob > Target", "Safety Risk", "PPoS", "ESS", 
-            "Robustness Spread", "Decision Rules"
-        ],
-        "Value": [
-            datetime.now().isoformat(), total_n, successes, saes, 
-            f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", 
-            f"{bpp:.2%}", f"{a_eff+b_eff:.1f}", f"{spread:.2%}", 
-            rules_summary
-        ]
-    }
-    st.download_button(
-        "Download CSV", 
-        pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), 
-        f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv"
-    )
+    report_data = {"Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Robustness Spread"],
+                   "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{a_eff+b_eff:.1f}", f"{spread:.2%}%"]}
+    st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
+
+
+
 
 
