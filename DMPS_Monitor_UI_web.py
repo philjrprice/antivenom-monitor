@@ -195,6 +195,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"BPP Success Forecast: **{bpp:.1%}**")
         st.write(f"PPoS (Predicted Prob): **{bpp:.1%}**") # NEW (Duplicate)
         st.write(f"ESS (Effective Sample N): **{a_eff + b_eff:.1f}**") # NEW
+            help="Total information content (Current N + Prior Weights)"
         st.write(f"Look Points: **N = {', '.join(map(str, look_points))}**")
 
 st.subheader("🧪 Sensitivity Analysis & Robustness")
@@ -248,12 +249,16 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         st.write("Trial is at the final analysis point.")
 
 if st.button("📥 Export Audit-Ready Snapshot"):
-    report_data = {"Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Robustness Spread"],
-                   "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{a_eff+b_eff:.1f}", f"{spread:.2%}%"]}
-    st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
-
-
-
-
-
-
+    # Capture the thresholds used for this specific decision
+    report_data = {
+        "Metric": [
+            "Timestamp", "N", "Successes", "SAEs", 
+            "Success Threshold (%)", "Futility Threshold (%)", 
+            "PPoS", "ESS"
+        ],
+        "Value": [
+            datetime.now().isoformat(), total_n, successes, saes, 
+            f"{success_conf_req:.1%}", f"{bpp_futility_limit:.1%}", 
+            f"{bpp:.2%}", f"{a_eff+b_eff:.1f}"
+        ]
+    }
