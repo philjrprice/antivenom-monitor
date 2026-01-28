@@ -59,6 +59,7 @@ p_equiv = beta.cdf(null_eff + equiv_bound, a_eff, b_eff) - beta.cdf(null_eff - e
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
 
+# Forecast Logic (Fixed Seed)
 def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
     np.random.seed(42) 
     rem_n = m_n - curr_n
@@ -77,7 +78,7 @@ def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
 
 bpp, ps_range = get_enhanced_forecasts(successes, total_n, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)
 
-# Evidence Shift Calculation
+# Evidence Shift (Bayes Factor)
 skep_a, skep_b = 1 + successes, skp_p + (total_n - successes)
 skep_prob = 1 - beta.cdf(target_eff, skep_a, skep_b)
 evidence_shift = p_target / skep_prob if skep_prob > 0 else 1.0
@@ -91,10 +92,10 @@ st.title("🐍 Hybrid Antivenom Trial Monitor")
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
-m3.metric(f"P(>{target_eff:.0%})", f"{p_target:.1%}")
+m3.metric(f"P(>{target_eff:.0%} Target)", f"{p_target:.1%}")
 m4.metric("Safety Risk", f"{p_toxic:.1%}")
 m5.metric("PPoS (Final)", f"{bpp:.1%}")
-m6.metric("Prior ESS", f"{prior_alpha + prior_beta:.1f}")
+m6.metric("ESS (Prior Weight)", f"{prior_alpha + prior_beta:.1f}")
 
 st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}** | Prob Equivalence: **{p_equiv:.1%}**")
 
@@ -130,6 +131,7 @@ fig.add_trace(go.Scatter(x=np.concatenate([x_ci_s, x_ci_s[::-1]]), y=np.concaten
 
 fig.add_vline(x=null_eff, line_dash="dot", line_color="gray", annotation_text="Null")
 fig.add_vline(x=target_eff, line_dash="dash", line_color="green", annotation_text="Target")
+fig.add_vline(x=dream_eff, line_dash="dashdot", line_color="blue", annotation_text="Goal")
 fig.add_vline(x=safe_limit, line_dash="dash", line_color="black", annotation_text="Limit")
 
 fig.update_layout(xaxis=dict(range=[0, 1], title="Rate"), height=450, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5), margin=dict(l=0, r=0, t=50, b=0))
@@ -160,6 +162,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"95% CI: **[{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]**")
         st.write(f"Prob > Null ({null_eff:.0%}): {p_null:.1%}")
         st.write(f"Prob > Target ({target_eff:.0%}): {p_target:.1%}")
+        st.write(f"Prob > Goal ({dream_eff:.0%}): {p_goal:.1%}")
         st.write(f"Equivalence Prob: {p_equiv:.1%}")
         st.write(f"Projected Success Range: **{ps_range[0]} - {ps_range[1]} successes**")
     with c2:
@@ -168,6 +171,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
         
+        # Regulatory Tool: OC Simulation
         st.markdown("---")
         if st.button("Calculate Operating Characteristics"):
             np.random.seed(42)
@@ -176,7 +180,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
             st.warning(f"Est. Type I Error: **{false_positives/1000:.2%}**")
             
     with c3:
-        st.markdown("**Operational Info**")
+        st.markdown("**Operational Info & Calendar**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
         st.write(f"Effective Sample Size (ESS): {prior_alpha + prior_beta:.1f}")
         look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
@@ -188,33 +192,35 @@ priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (
 cols, target_probs = st.columns(3), []
 for i, (name, ap, bp) in enumerate(priors_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
+    p_n_s = 1 - beta.cdf(null_eff, ae_s, be_s)
     p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
+    p_g_s = 1 - beta.cdf(dream_eff, ae_s, be_s)
     target_probs.append(p_t_s)
     with cols[i]:
         st.info(f"**{name}**")
-        st.write(f"Prob > Target: **{p_t_s:.1%}**")
+        st.write(f"Prob > Null ({null_eff:.0%}): {p_n_s:.1%}")
+        st.write(f"Prob > Target ({target_eff:.0%}): **{p_t_s:.1%}**")
+        st.write(f"Prob > Goal ({dream_eff:.0%}): {p_g_s:.1%}")
         if "Neutral" in name:
             st.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**")
 
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance).")
 
-# NEW: Separate Regulatory Decision Table window
+# NEW: Separate Regulatory Decision Table expander
 with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
     st.markdown("This table calculates the exact number of successes required at each future look point to trigger a stop.")
     boundary_data = []
     for lp in look_points:
         if lp <= total_n: continue
-        # Find minimum successes for success stop
         s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
-        # Find maximum successes for futility stop
         f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] > bpp_futility_limit), -1)
         boundary_data.append({"N": lp, "Success S ≥": s_req, "Futility S ≤": f_req if f_req != -1 else "Stop"})
     
     if boundary_data:
         st.table(pd.DataFrame(boundary_data))
     else:
-        st.write("No future look points available.")
+        st.write("Trial is at or beyond the final look point.")
 
 # Export
 st.markdown("---")
