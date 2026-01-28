@@ -119,7 +119,8 @@ else:
 st.subheader("📈 Trial Decision Corridors")
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
-succ_line, fut_line = [], []
+succ_line
+fut_line.append(max(0, f_req))
 
 for lp in viz_n:
     # Success: Smallest S where confidence > requirement
@@ -271,4 +272,5 @@ if st.button("📥 Export Audit-Ready Snapshot"):
         pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), 
         f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv"
     )
+
 
