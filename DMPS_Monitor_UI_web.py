@@ -36,7 +36,7 @@ with st.sidebar.expander("Success & Futility Rules"):
 # 4. Safety Rules (FIXED NESTING)
 with st.sidebar.expander("Safety Rules", expanded=True):
     safe_limit = st.slider("SAE Upper Limit (%)", 0.05, 0.50, 0.15)
-    safe_conf_req = st.sidebar.slider("Safety Stop Confidence", 0.5, 0.99, 0.90)
+    safe_conf_req = st.slider("Safety Stop Confidence", 0.5, 0.99, 0.90)
 
 # 5. Sensitivity
 with st.sidebar.expander("Sensitivity Prior Settings"):
@@ -160,3 +160,4 @@ for i, (name, ap, bp) in enumerate(priors_list):
     with cols[i]:
         st.info(f"**{name}**")
         st.write(f"P(>Target): {(1 - beta.cdf(target_eff, ae_s, be_s)):.1%}")
+
