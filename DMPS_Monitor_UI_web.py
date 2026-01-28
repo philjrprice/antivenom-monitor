@@ -214,8 +214,8 @@ for i, (name, ap, bp) in enumerate(priors_list):
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
         st.write(f"Prob > Goal: **{p_g_s:.1%}**")
         if "Neutral" in name: 
-    st.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**")
-    st.caption("Interpretation: >1 favors Treatment; >10 is strong evidence.")
+            st.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**")
+            st.caption("Interpretation: >1 favors Treatment; >10 is strong evidence.")
 
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** ({spread:.1%} variance between prior mindsets).")
@@ -278,6 +278,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
 
 
 
