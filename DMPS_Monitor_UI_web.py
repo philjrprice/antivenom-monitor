@@ -103,7 +103,6 @@ m6.metric("Prior Weight", f"{prior_alpha + prior_beta:.1f}")
 st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}** | Prob Equivalence: **{p_equiv:.1%}**")
 st.markdown("---")
 
-# Governing Hierarchy logic preserved from V17
 is_look_point = (total_n >= min_interim) and ((total_n - min_interim) % check_cohort == 0)
 if p_toxic > safe_conf_req:
     st.error(f"🛑 **GOVERNING RULE: SAFETY STOP.** Risk ({p_toxic:.1%}) exceeds {safe_conf_req:.0%} threshold.")
@@ -117,7 +116,6 @@ else:
     next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
     st.info(f"🧬 **STATUS: MONITORING.** Trial between cohorts. Next check at N={next_check}.")
 
-# --- Visual Decision Corridors ---
 st.subheader("📈 Trial Decision Corridors")
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
@@ -136,7 +134,6 @@ fig_corr.add_trace(go.Scatter(x=[total_n], y=[successes], mode='markers+text', t
 fig_corr.update_layout(xaxis_title="Sample Size (N)", yaxis_title="Successes (S)", height=400, margin=dict(t=20, b=0))
 st.plotly_chart(fig_corr, use_container_width=True)
 
-# Graph Row
 st.subheader("Statistical Distributions (95% CI Shaded)")
 x = np.linspace(0, 1, 500)
 fig = go.Figure()
@@ -176,6 +173,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
     with c2:
         st.markdown("**Safety Summary**")
         st.write(f"Mean Toxicity: **{safe_mean:.1%}**") 
+        st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**") # NEW
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
         if st.button("Calculate Sequential Type I Error"):
             np.random.seed(42)
@@ -190,7 +188,9 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
             st.warning(f"Estimated Sequential Type I Error: **{fp_count/1000:.1%}**")
     with c3:
         st.markdown("**Operational Info**")
-        st.write(f"BPP Success Forecast: {bpp:.1%}")
+        st.write(f"BPP Success Forecast: **{bpp:.1%}**")
+        st.write(f"PPoS (Predicted Prob): **{bpp:.1%}**") # NEW (Duplicate)
+        st.write(f"ESS (Effective Sample N): **{a_eff + b_eff:.1f}**") # NEW
         st.write(f"Look Points: **N = {', '.join(map(str, look_points))}**")
 
 st.subheader("🧪 Sensitivity Analysis & Robustness")
@@ -198,7 +198,6 @@ priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (
 cols, target_probs = st.columns(3), []
 for i, (name, ap, bp) in enumerate(priors_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
-    # Calculation block for comprehensive stats
     m_eff_s = ae_s / (ae_s + be_s)
     p_n_s = 1 - beta.cdf(null_eff, ae_s, be_s)
     p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
@@ -227,6 +226,6 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
     else: st.write("Trial is at the final analysis point.")
 
 if st.button("📥 Export Audit-Ready Snapshot"):
-    report_data = {"Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "Robustness Spread"],
-                   "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{spread:.2%}%"]}
+    report_data = {"Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Robustness Spread"],
+                   "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{a_eff+b_eff:.1f}", f"{spread:.2%}%"]}
     st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
