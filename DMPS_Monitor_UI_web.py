@@ -15,14 +15,17 @@ saes = st.sidebar.number_input("Serious Adverse Events (SAEs)", 0, total_n, 1)
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Study Parameters")
 
+# 1. Base Priors
 with st.sidebar.expander("Base Study Priors", expanded=False):
     prior_alpha = st.number_input("Prior Successes (Alpha)", 0.1, 10.0, 1.0)
     prior_beta = st.number_input("Prior Failures (Beta)", 0.1, 10.0, 1.0)
 
+# 2. Timing
 with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
     min_interim = st.number_input("Min N before first check", 1, max_n_val, 14)
     check_cohort = st.number_input("Check every X patients (Cohort)", 1, 20, 5)
 
+# 3. Efficacy/Futility
 with st.sidebar.expander("Success & Futility Rules"):
     null_eff = st.slider("Null Efficacy (p0) (%)", 0.1, 1.0, 0.50)
     target_eff = st.slider("Target Efficacy (p1) (%)", 0.1, 1.0, 0.60)
@@ -30,11 +33,13 @@ with st.sidebar.expander("Success & Futility Rules"):
     success_conf_req = st.slider("Success Confidence Req.", 0.5, 0.99, 0.74)
     bpp_futility_limit = st.slider("BPP Futility Limit", 0.01, 0.20, 0.05)
 
-# FIXED: Safety Stop Confidence back inside Safety Rules
+# 4. Safety Rules (FIXED NESTING)
 with st.sidebar.expander("Safety Rules", expanded=True):
     safe_limit = st.slider("SAE Upper Limit (%)", 0.05, 0.50, 0.15)
+    # This slider is now explicitly inside this block
     safe_conf_req = st.sidebar.slider("Safety Stop Confidence", 0.5, 0.99, 0.90)
 
+# 5. Sensitivity
 with st.sidebar.expander("Sensitivity Prior Settings"):
     opt_p = st.slider("Optimistic Prior Weight", 1, 10, 4)
     skp_p = st.slider("Skeptical Prior Weight", 1, 10, 4)
@@ -66,7 +71,7 @@ is_look_point = (total_n >= min_interim) and ((total_n - min_interim) % check_co
 # --- MAIN DASHBOARD ---
 st.title("🐍 Hybrid Antivenom Trial Monitor")
 
-# Row 1: Metrics
+# Row 1: Key Metrics
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
@@ -91,7 +96,7 @@ else:
     next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
     st.info(f"🧬 **MONITORING:** Adaptive state active. Next check at N={next_check}.")
 
-# Graph Row
+# Graph with shading and central legend
 st.subheader("Statistical Distributions (95% CI Shaded)")
 
 x = np.linspace(0, 1, 500)
@@ -99,14 +104,14 @@ y_eff = beta.pdf(x, a_eff, b_eff)
 y_safe = beta.pdf(x, a_safe, b_safe)
 
 fig = go.Figure()
-# Efficacy Plot & Shading
+# Efficacy
 fig.add_trace(go.Scatter(x=x, y=y_eff, name="Efficacy Belief", line=dict(color='#2980b9', width=3)))
 x_ci_eff = np.linspace(eff_ci[0], eff_ci[1], 100)
 fig.add_trace(go.Scatter(x=np.concatenate([x_ci_eff, x_ci_eff[::-1]]),
                          y=np.concatenate([beta.pdf(x_ci_eff, a_eff, b_eff), np.zeros(100)]),
                          fill='toself', fillcolor='rgba(41, 128, 185, 0.2)',
                          line=dict(color='rgba(255,255,255,0)'), hoverinfo="skip", showlegend=False))
-# Safety Plot & Shading
+# Safety
 fig.add_trace(go.Scatter(x=x, y=y_safe, name="Safety Belief", line=dict(color='#c0392b', width=3)))
 x_ci_safe = np.linspace(safe_ci[0], safe_ci[1], 100)
 fig.add_trace(go.Scatter(x=np.concatenate([x_ci_safe, x_ci_safe[::-1]]),
@@ -114,7 +119,6 @@ fig.add_trace(go.Scatter(x=np.concatenate([x_ci_safe, x_ci_safe[::-1]]),
                          fill='toself', fillcolor='rgba(192, 57, 43, 0.2)',
                          line=dict(color='rgba(255,255,255,0)'), hoverinfo="skip", showlegend=False))
 
-# Reference Lines
 fig.add_vline(x=null_eff, line_dash="dot", line_color="gray", annotation_text="Null")
 fig.add_vline(x=target_eff, line_dash="dash", line_color="green", annotation_text="Target")
 fig.add_vline(x=dream_eff, line_dash="dashdot", line_color="blue", annotation_text="Goal")
@@ -131,7 +135,7 @@ st.plotly_chart(fig, use_container_width=True)
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown("**Efficacy Summary**")
+        st.markdown("**Efficacy Targets**")
         st.write(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
         st.write(f"Prob > Target ({target_eff:.0%}): **{p_target:.1%}**")
         st.write(f"Prob > Goal ({dream_eff:.0%}): **{p_goal:.1%}**")
@@ -142,12 +146,12 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
         st.write(f"95% CI: [{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]")
     with c3:
-        st.markdown("**Operational Stats**")
+        st.markdown("**Operational Info**")
         st.write(f"Success Forecast (BPP): {bpp:.1%}")
         st.write(f"Next Check: Patient {total_n if is_look_point else next_check}")
-        st.write(f"Adaptive Check Rule: {'READY' if is_at_min_n else 'WAITING'}")
+        st.write(f"Adaptive Timing: Every {check_cohort} after {min_interim}")
 
-# Sensitivity Analysis
+# Sensitivity
 st.subheader("🧪 Sensitivity Analysis")
 
 priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (f"Skeptical (1:{skp_p})", 1, skp_p)]
