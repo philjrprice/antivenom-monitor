@@ -97,8 +97,8 @@ m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
 m3.metric(f"P(>{target_eff:.0%})", f"{p_target:.1%}")
 m4.metric("Safety Risk", f"{p_toxic:.1%}")
-m5.metric("PPoS (Final)", f"{bpp:.1%}")
-m6.metric("Prior Weight", f"{prior_alpha + prior_beta:.1f}")
+m5.metric("PPoS (Final)", f"{bpp:.1%}, help="Predicted Probability of Success: The likelihood the trial will succeed if it continues to the maximum sample size (Max N).")
+m6.metric("Prior Weight", f"{prior_alpha + prior_beta:.1f}, help="Total information content in the model, calculated as the Current N plus the sum of your Prior Weights (Alpha + Beta).")
 
 st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}** | Prob Equivalence: **{p_equiv:.1%}**")
 st.markdown("---")
@@ -278,6 +278,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
 
 
 
