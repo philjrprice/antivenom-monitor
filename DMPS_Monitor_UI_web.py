@@ -60,14 +60,13 @@ p_equiv = beta.cdf(null_eff + equiv_bound, a_eff, b_eff) - beta.cdf(null_eff - e
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
 
-# NEW MATH: Enhanced Forecasts and Evidence Strength
+# Forecasts and Success Range logic
 def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
     rem_n = m_n - curr_n
     if rem_n <= 0:
         is_success = (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf
-        return 1.0, 1.0, [curr_s, curr_s]
+        return 1.0 if is_success else 0.0, 1.0 if is_success else 0.0, [curr_s, curr_s]
     
-    # Monte Carlo for PPoS and Final Success Range
     future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 1000)
     future_successes = np.random.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
@@ -79,7 +78,7 @@ def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
 
 bpp, ppos, ps_range = get_enhanced_forecasts(successes, total_n, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)
 
-# Evidence Strength (Bayes Factor proxy: Posterior / Skeptical Prior)
+# Evidence Shift Calculation (moved logic)
 skep_a, skep_b = 1 + successes, skp_p + (total_n - successes)
 skep_prob = 1 - beta.cdf(target_eff, skep_a, skep_b)
 evidence_shift = p_target / skep_prob if skep_prob > 0 else 1.0
@@ -150,37 +149,36 @@ if include_heatmap:
                          color_continuous_scale="RdYlGn", origin="lower")
     fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers+text', text=["Current Status"], 
                                   textposition="top right", marker=dict(color='white', size=12, symbol='x')))
-    # NEW: Safety Threshold Line
-    fig_heat.add_hline(y=safe_limit, line_dash="dash", line_color="red", annotation_text="Max SAE Limit")
+    # Safety Boundary Line on Heatmap
+    fig_heat.add_hline(y=safe_limit, line_dash="dash", line_color="red", annotation_text="Max SAE Threshold")
     fig_heat.update_layout(height=500)
     st.plotly_chart(fig_heat, use_container_width=True)
 
-# Breakdown - ALL STATS RETAINED + NEW ADDITIONS
+# Breakdown - PRESERVING ALL STATS FROM PREVIOUS VERSION
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown("**Efficacy & Forecasts**")
-        st.write(f"Mean Efficacy: **{eff_mean:.1%}**")
+        st.markdown("**Efficacy Summary**")
+        st.write(f"Mean Efficacy: **{eff_mean:.1%}**") 
         st.write(f"95% CI: **[{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]**")
         st.write(f"Prob > Null ({null_eff:.0%}): {p_null:.1%}")
         st.write(f"Prob > Target ({target_eff:.0%}): {p_target:.1%}")
         st.write(f"Prob > Goal ({dream_eff:.0%}): {p_goal:.1%}")
         st.write(f"Equivalence Prob: {p_equiv:.1%}")
-        st.write(f"Projected Success Range: **{ps_range[0]} - {ps_range[1]} successes**") # NEW
+        st.write(f"Projected Success Range: **{ps_range[0]} - {ps_range[1]} successes**")
     with c2:
-        st.markdown("**Safety & Evidence Strength**")
-        st.write(f"Mean Toxicity: **{safe_mean:.1%}**")
+        st.markdown("**Safety Summary**")
+        st.write(f"Mean Toxicity: **{safe_mean:.1%}**") 
         st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
-        st.write(f"Evidence Shift (Bayes Factor): **{evidence_shift:.2f}x**") # NEW
     with c3:
         st.markdown("**Operational Info & Calendar**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
         st.write(f"PPoS (Final Analysis): {ppos:.1%}")
         st.write(f"Effective Sample Size (ESS): {prior_alpha + prior_beta:.1f}")
-        # NEW: Interim Calendar
+        # Interim calendar list
         look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
-        st.write(f"Scheduled Interim Checks: **N = {', '.join(map(str, look_points))}**")
+        st.write(f"Scheduled Checks: **N = {', '.join(map(str, look_points))}**")
 
 # Sensitivity Analysis
 st.subheader("🧪 Sensitivity Analysis")
@@ -197,6 +195,9 @@ for i, (name, ap, bp) in enumerate(priors_list):
         st.write(f"Prob > Null: {p_n_s:.1%}")
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
         st.write(f"Prob > Goal: {p_g_s:.1%}")
+        # NEW: Evidence shift moved here under Neutral
+        if "Neutral" in name:
+            st.write(f"Evidence Strength: **{evidence_shift:.2f}x**")
 
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance between prior mindsets).")
