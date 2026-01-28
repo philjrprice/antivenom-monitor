@@ -6,7 +6,7 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Universal Trial Monitor: Hybrid", layout="wide")
+st.set_page_config(page_title="Universal Trial Monitor: Airtight", layout="wide")
 
 # --- SIDEBAR: INPUT SECTIONS ---
 st.sidebar.header("📋 Current Trial Data")
@@ -16,7 +16,7 @@ successes = st.sidebar.number_input("Total Successes", 0, total_n, value=min(14,
 saes = st.sidebar.number_input("Serious Adverse Events (SAEs)", 0, total_n, value=min(1, total_n))
 
 st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Study Parameters")
+st.sidebar.header("⚙️ Regulatory Parameters")
 
 with st.sidebar.expander("Base Study Priors", expanded=True):
     prior_alpha = st.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1)
@@ -58,7 +58,8 @@ p_equiv = beta.cdf(null_eff + equiv_bound, a_eff, b_eff) - beta.cdf(null_eff - e
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
 
-# Forecast Logic (Fixed Seed for reproducibility)
+# Forecast Logic (Fixed Seed for Airtight Reproducibility)
+@st.cache_data
 def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
     np.random.seed(42) 
     rem_n = m_n - curr_n
@@ -66,7 +67,8 @@ def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
         is_success = (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf
         return 1.0 if is_success else 0.0, [curr_s, curr_s]
     
-    future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 2000)
+    # Increased density for regulatory stability
+    future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 5000)
     future_successes = np.random.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
     final_confs = 1 - beta.cdf(t_eff, p_a + total_proj_s, p_b + (m_n - total_proj_s))
@@ -83,7 +85,7 @@ skep_prob = 1 - beta.cdf(target_eff, skep_a, skep_b)
 evidence_shift = p_target / skep_prob if skep_prob > 0 else 1.0
 
 # --- MAIN DASHBOARD ---
-st.title("🐍 Hybrid Antivenom Trial Monitor")
+st.title("🐍 Hybrid Antivenom Trial Monitor: Airtight")
 
 # Header Metrics
 m1, m2, m3, m4, m5, m6 = st.columns(6)
@@ -102,19 +104,19 @@ st.markdown("---")
 is_look_point = (total_n >= min_interim) and ((total_n - min_interim) % check_cohort == 0)
 
 if p_toxic > safe_conf_req:
-    st.error(f"🛑 **GOVERNING RULE: SAFETY STOP.** Risk of SAEs ({p_toxic:.1%}) exceeds {safe_conf_req:.0%} threshold.")
+    st.error(f"🛑 **GOVERNING RULE: SAFETY STOP.** Risk of SAEs ({p_toxic:.1%}) exceeds {safe_conf_req:.0%} threshold. Recommend immediate suspension.")
 elif is_look_point:
     if bpp < bpp_futility_limit: 
         st.warning(f"⚠️ **GOVERNING RULE: FUTILITY STOP.** PPoS ({bpp:.1%}) is below the {bpp_futility_limit:.0%} floor.")
     elif p_target > success_conf_req: 
         st.success(f"✅ **GOVERNING RULE: EFFICACY SUCCESS.** Evidence achieved with {p_target:.1%} confidence.")
     else: 
-        st.info(f"🛡️ **GOVERNING RULE: CONTINUE.** Interim check at N={total_n} is indeterminate.")
+        st.info(f"🛡️ **GOVERNING RULE: CONTINUE.** Interim check at N={total_n} is indeterminate; continue to next cohort.")
 elif total_n < min_interim:
-    st.info(f"⏳ **STATUS: LEAD-IN.** Enrollment phase; first check at N={min_interim}.")
+    st.info(f"⏳ **STATUS: LEAD-IN.** Trial in initial enrollment; first interim check at N={min_interim}.")
 else:
     next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
-    st.info(f"🧬 **STATUS: MONITORING.** Trial is between cohorts. Next check at N={next_check}.")
+    st.info(f"🧬 **STATUS: MONITORING.** Trial between scheduled look points. Next check at N={next_check}.")
 
 # Graph Row
 st.subheader("Statistical Distributions (95% CI Shaded)")
@@ -150,7 +152,7 @@ if include_heatmap:
     score = E - (2 * S)
     fig_heat = px.imshow(score, x=eff_grid, y=saf_grid, labels=dict(x="Efficacy Rate", y="SAE Rate", color="Benefit Score"),
                          color_continuous_scale="RdYlGn", origin="lower")
-    fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers+text', text=["Current"], marker=dict(color='white', size=12, symbol='x')))
+    fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers+text', text=["Current Status"], marker=dict(color='white', size=12, symbol='x')))
     fig_heat.update_layout(height=450)
     st.plotly_chart(fig_heat, use_container_width=True)
 
@@ -172,26 +174,25 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
         
         st.markdown("---")
-        if st.button("Calculate Sequential Type I Error"):
+        if st.button("Calculate Sequential Type I Error (Multi-Look Simulation)"):
             np.random.seed(42)
-            # Simulating sequential trial to estimate alpha inflation
             look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
             fp_count = 0
-            for _ in range(1000):
+            for _ in range(2000):
                 trial_outcomes = np.random.binomial(1, null_eff, max_n_val)
                 for lp in look_points:
                     s = sum(trial_outcomes[:lp])
                     if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > success_conf_req:
                         fp_count += 1
                         break
-            st.warning(f"Estimated Sequential Type I Error: **{fp_count/1000:.1%}**")
+            st.warning(f"Estimated Sequential Alpha Inflation: **{fp_count/2000:.1%}**")
             
     with c3:
         st.markdown("**Operational Info**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
         st.write(f"Prior ESS: {prior_alpha + prior_beta:.1f}")
         look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
-        st.write(f"Look Points: **N = {', '.join(map(str, look_points))}**")
+        st.write(f"Scheduled Looks: **N = {', '.join(map(str, look_points))}**")
 
 # Sensitivity Analysis
 st.subheader("🧪 Sensitivity Analysis")
@@ -216,17 +217,21 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
     boundary_data = []
     for lp in look_points:
         if lp <= total_n: continue
+        # Find exact threshold for success
         s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
+        # Find exact threshold for futility
         f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] > bpp_futility_limit), -1)
         boundary_data.append({"N": lp, "Success S ≥": s_req, "Futility S ≤": f_req if f_req != -1 else "Stop"})
     if boundary_data:
         st.table(pd.DataFrame(boundary_data))
+    else:
+        st.write("Trial is at the final look point.")
 
 # Export Snapshot
 st.markdown("---")
 if st.button("📥 Export Audit-Ready Snapshot"):
     report_data = {
-        "Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "Bayes Factor", "Prior Alpha", "Prior Beta"],
-        "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{evidence_shift:.2f}", prior_alpha, prior_beta]
+        "Metric": ["Snapshot Time", "Sample N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "Bayes Factor", "Prior Alpha", "Prior Beta"],
+        "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.4f}", f"{p_target:.4f}", f"{p_toxic:.4f}", f"{bpp:.4f}", f"{evidence_shift:.2f}", prior_alpha, prior_beta]
     }
-    st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
+    st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d_%H%M')}.csv")
