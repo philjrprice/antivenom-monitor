@@ -19,8 +19,8 @@ st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Study Parameters")
 
 with st.sidebar.expander("Base Study Priors", expanded=True):
-    prior_alpha = st.sidebar.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1)
-    prior_beta = st.sidebar.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1)
+    prior_alpha = st.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1)
+    prior_beta = st.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1)
 
 with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
     min_interim = st.number_input("Min N before first check", 1, max_n_val, 14)
@@ -212,3 +212,4 @@ if st.button("📥 Export Results"):
     df_report = pd.DataFrame(report_data)
     csv = df_report.to_csv(index=False).encode('utf-8')
     st.download_button("Download Snapshot (CSV)", csv, "Trial_Regulatory_Snapshot.csv", "text/csv")
+
