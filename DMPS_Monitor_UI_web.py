@@ -340,9 +340,9 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         
         boundary_data.append({
             "N": lp, 
-            "Success S ≥": s_req, 
-            "Futility S ≤": f_req if f_req != -1 else "No Stop", 
-            "Safety SAEs ≥": safe_req
+            "Success Stop S ≥": s_req, 
+            "Futility Stop S ≤": f_req if f_req != -1 else "No Stop", 
+            "Safety Stop SAEs ≥": safe_req
         })
     
     # Table logic is OUTSIDE the for-loop to run once
@@ -384,3 +384,4 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
