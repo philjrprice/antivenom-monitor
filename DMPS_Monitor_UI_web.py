@@ -24,15 +24,15 @@ with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
     check_cohort = st.number_input("Check every X patients (Cohort)", 1, 20, 5)
 
 with st.sidebar.expander("Success & Futility Rules"):
-    target_eff = st.slider("Target Efficacy (%)", 0.1, 1.0, 0.60)
-    null_eff = st.slider("Null Efficacy (%)", 0.1, 1.0, 0.50)
+    null_eff = st.slider("Null Efficacy (p0) (%)", 0.1, 1.0, 0.50)
+    target_eff = st.slider("Target Efficacy (p1) (%)", 0.1, 1.0, 0.60)
     dream_eff = st.slider("Goal/Dream Efficacy (%)", 0.1, 1.0, 0.70)
     success_conf_req = st.slider("Success Confidence Req.", 0.5, 0.99, 0.74)
     bpp_futility_limit = st.slider("BPP Futility Limit", 0.01, 0.20, 0.05)
 
 with st.sidebar.expander("Safety Rules", expanded=True):
     safe_limit = st.slider("SAE Upper Limit (%)", 0.05, 0.50, 0.15)
-    safe_conf_req = st.slider("Safety Stop Confidence", 0.5, 0.99, 0.90)
+    safe_conf_req = st.sidebar.slider("Safety Stop Confidence", 0.5, 0.99, 0.90)
 
 with st.sidebar.expander("Sensitivity Prior Settings"):
     opt_p = st.slider("Optimistic Prior Weight", 1, 10, 4)
@@ -42,11 +42,15 @@ with st.sidebar.expander("Sensitivity Prior Settings"):
 a_eff, b_eff = prior_alpha + successes, prior_beta + (total_n - successes)
 a_safe, b_safe = prior_alpha + saes, prior_beta + (total_n - saes)
 
+# Efficacy Probabilities
+p_null = 1 - beta.cdf(null_eff, a_eff, b_eff)
+p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)
+p_goal = 1 - beta.cdf(dream_eff, a_eff, b_eff)
+
+# Safety & CIs
+p_toxic = 1 - beta.cdf(safe_limit, a_safe, b_safe)
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
-
-p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)
-p_toxic = 1 - beta.cdf(safe_limit, a_safe, b_safe)
 
 def get_bpp(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
     rem_n = m_n - curr_n
@@ -63,14 +67,20 @@ is_look_point = (total_n >= min_interim) and ((total_n - min_interim) % check_co
 # --- MAIN DASHBOARD ---
 st.title("🐍 Hybrid Antivenom Trial Monitor")
 
+# Row 1: Metrics
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
-m3.metric("Eff. Confidence", f"{p_target:.1%}")
-m4.metric("Mean Safety", f"{safe_mean:.1%}")
-m5.metric("Safety Risk", f"{p_toxic:.1%}")
-m6.metric("BPP (Forecast)", f"{bpp:.1%}")
+m3.metric(f"P(>{target_eff:.0%} Target)", f"{p_target:.1%}")
+m4.metric("Safety Risk", f"{p_toxic:.1%}")
+m5.metric("BPP (Forecast)", f"{bpp:.1%}")
+m6.metric(f"P(>{dream_eff:.0%} Goal)", f"{p_goal:.1%}")
 
+# Row 2: Secondary Efficacy Context
+c_null, c_target, c_goal = st.columns([1,1,1])
+with c_null: st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
+
+# Decision Status
 st.markdown("---")
 if p_toxic > safe_conf_req:
     st.error(f"🚨 **CRITICAL SAFETY STOP:** Prob. Toxicity ({p_toxic:.1%}) exceeds limit.")
@@ -84,26 +94,21 @@ else:
     next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
     st.info(f"🧬 **MONITORING:** Next check at N={next_check}.")
 
-# --- GRAPH WITH 95% CI SHADING AND CENTRAL LEGEND ---
-st.subheader("Statistical Distributions with 95% Credible Intervals")
-
-
-
+# Graph Row
+st.subheader("Statistical Distributions (95% CI Shaded)")
 x = np.linspace(0, 1, 500)
 y_eff = beta.pdf(x, a_eff, b_eff)
 y_safe = beta.pdf(x, a_safe, b_safe)
 
 fig = go.Figure()
-
-# Efficacy Plot & Shading
+# Efficacy
 fig.add_trace(go.Scatter(x=x, y=y_eff, name="Efficacy Belief", line=dict(color='#2980b9', width=3)))
 x_ci_eff = np.linspace(eff_ci[0], eff_ci[1], 100)
 fig.add_trace(go.Scatter(x=np.concatenate([x_ci_eff, x_ci_eff[::-1]]),
                          y=np.concatenate([beta.pdf(x_ci_eff, a_eff, b_eff), np.zeros(100)]),
                          fill='toself', fillcolor='rgba(41, 128, 185, 0.2)',
                          line=dict(color='rgba(255,255,255,0)'), hoverinfo="skip", showlegend=False))
-
-# Safety Plot & Shading
+# Safety
 fig.add_trace(go.Scatter(x=x, y=y_safe, name="Safety Belief", line=dict(color='#c0392b', width=3)))
 x_ci_safe = np.linspace(safe_ci[0], safe_ci[1], 100)
 fig.add_trace(go.Scatter(x=np.concatenate([x_ci_safe, x_ci_safe[::-1]]),
@@ -112,56 +117,44 @@ fig.add_trace(go.Scatter(x=np.concatenate([x_ci_safe, x_ci_safe[::-1]]),
                          line=dict(color='rgba(255,255,255,0)'), hoverinfo="skip", showlegend=False))
 
 # Reference Lines
+fig.add_vline(x=null_eff, line_dash="dot", line_color="gray", annotation_text="Null")
 fig.add_vline(x=target_eff, line_dash="dash", line_color="green", annotation_text="Target")
+fig.add_vline(x=dream_eff, line_dash="dashdot", line_color="blue", annotation_text="Goal")
 fig.add_vline(x=safe_limit, line_dash="dash", line_color="black", annotation_text="Limit")
 
-# Layout Adjustments: Central Legend
 fig.update_layout(
-    xaxis=dict(range=[0, 1], title="Rate (Success/SAE)"),
-    yaxis=dict(title="Density"),
-    height=450,
-    legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        xanchor="center",
-        x=0.5
-    ),
+    xaxis=dict(range=[0, 1], title="Rate"), yaxis=dict(title="Density"), height=450,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     margin=dict(l=0, r=0, t=50, b=0)
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# Detailed Stats
+# Full Stats Breakdown
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
-    c1.markdown(f"**Efficacy Summary**")
-    c1.write(f"Mean: {eff_mean:.1%}")
-    c1.write(f"95% CI: [{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]")
-    c1.write(f"P(>Target): {p_target:.1%}")
-    
-    c2.markdown(f"**Safety Summary**")
-    c2.write(f"Mean: {safe_mean:.1%}")
-    c2.write(f"95% CI: [{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]")
-    c2.write(f"P(>Limit): {p_toxic:.1%}")
-    
-    c3.markdown(f"**Prior & Logic**")
-    c3.write(f"Prior α/β: {prior_alpha}/{prior_beta}")
-    c3.write(f"BPP: {bpp:.1%}")
-    c3.write(f"Look Point: {'YES' if is_look_point else 'NO'}")
+    with c1:
+        st.markdown("**Efficacy Targets**")
+        st.write(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
+        st.write(f"Prob > Target ({target_eff:.0%}): **{p_target:.1%}**")
+        st.write(f"Prob > Goal ({dream_eff:.0%}): **{p_goal:.1%}**")
+        st.write(f"95% CI: [{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]")
+    with c2:
+        st.markdown("**Safety Summary**")
+        st.write(f"Mean Toxicity: {safe_mean:.1%}")
+        st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
+        st.write(f"95% CI: [{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]")
+    with c3:
+        st.markdown("**Operational Info**")
+        st.write(f"BPP Success Forecast: {bpp:.1%}")
+        st.write(f"Next Check: Patient {total_n if is_look_point else next_check}")
+        st.write(f"Prior Strength: {prior_alpha + prior_beta} patients")
 
 # Sensitivity Analysis
 st.subheader("🧪 Sensitivity Analysis")
 priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (f"Skeptical (1:{skp_p})", 1, skp_p)]
 cols = st.columns(3)
-target_probs = []
 for i, (name, ap, bp) in enumerate(priors_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
-    p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
-    target_probs.append(p_t_s)
     with cols[i]:
         st.info(f"**{name}**")
-        st.write(f"Mean Eff: {ae_s/(ae_s+be_s):.1%}")
-        st.write(f"P(>{target_eff:.0%}): {p_t_s:.1%}")
-
-spread = max(target_probs) - min(target_probs)
-st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance).")
+        st.write(f"P(>Target): {(1 - beta.cdf(target_eff, ae_s, be_s)):.1%}")
