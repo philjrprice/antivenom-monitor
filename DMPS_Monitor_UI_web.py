@@ -17,9 +17,9 @@ st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Study Parameters")
 
 with st.sidebar.expander("Base Study Priors", expanded=True):
-    # UPDATED: Changed to sliders for a more "Universal Tool" feel
-    prior_alpha = st.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1, help="Virtual successes before trial data.")
-    prior_beta = st.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1, help="Virtual failures before trial data.")
+    # UPDATED: Using sliders for the universal prior adjustment
+    prior_alpha = st.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1)
+    prior_beta = st.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1)
 
 with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
     min_interim = st.number_input("Min N before first check", 1, max_n_val, 14)
@@ -44,7 +44,6 @@ with st.sidebar.expander("Sensitivity Prior Settings"):
 a_eff, b_eff = prior_alpha + successes, prior_beta + (total_n - successes)
 a_safe, b_safe = prior_alpha + saes, prior_beta + (total_n - saes)
 
-# Probability checks against all three thresholds
 p_null = 1 - beta.cdf(null_eff, a_eff, b_eff)
 p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)
 p_goal = 1 - beta.cdf(dream_eff, a_eff, b_eff)
@@ -98,12 +97,11 @@ x = np.linspace(0, 1, 500)
 y_eff, y_safe = beta.pdf(x, a_eff, b_eff), beta.pdf(x, a_safe, b_safe)
 fig = go.Figure()
 
-# Efficacy + Shading
 fig.add_trace(go.Scatter(x=x, y=y_eff, name="Efficacy Belief", line=dict(color='#2980b9', width=3)))
 x_ci_e = np.linspace(eff_ci[0], eff_ci[1], 100)
 fig.add_trace(go.Scatter(x=np.concatenate([x_ci_e, x_ci_e[::-1]]), y=np.concatenate([beta.pdf(x_ci_e, a_eff, b_eff), np.zeros(100)]),
                          fill='toself', fillcolor='rgba(41, 128, 185, 0.2)', line=dict(color='rgba(255,255,255,0)'), showlegend=False))
-# Safety + Shading
+
 fig.add_trace(go.Scatter(x=x, y=y_safe, name="Safety Belief", line=dict(color='#c0392b', width=3)))
 x_ci_s = np.linspace(safe_ci[0], safe_ci[1], 100)
 fig.add_trace(go.Scatter(x=np.concatenate([x_ci_s, x_ci_s[::-1]]), y=np.concatenate([beta.pdf(x_ci_s, a_safe, b_safe), np.zeros(100)]),
@@ -130,7 +128,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.markdown("**Safety Summary**")
         st.write(f"Mean Toxicity: {safe_mean:.1%}")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
-    with col3:
+    with c3: # FIXED: Changed from col3 to c3 to resolve NameError
         st.markdown("**Operational Info**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
         st.write(f"Prior Strength: {prior_alpha + prior_beta:.1f} pts")
@@ -143,7 +141,6 @@ cols, target_probs = st.columns(3), []
 for i, (name, ap, bp) in enumerate(priors_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
     
-    # Calculate all three efficacy probabilities for sensitivity
     p_n_s = 1 - beta.cdf(null_eff, ae_s, be_s)
     p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
     p_g_s = 1 - beta.cdf(dream_eff, ae_s, be_s)
@@ -157,4 +154,3 @@ for i, (name, ap, bp) in enumerate(priors_list):
 
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance between prior mindsets).")
-
