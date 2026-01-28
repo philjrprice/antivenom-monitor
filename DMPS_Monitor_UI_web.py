@@ -67,7 +67,7 @@ def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
         is_success = (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf
         return 1.0 if is_success else 0.0, [curr_s, curr_s]
     
-    future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 1000)
+    future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 2000)
     future_successes = np.random.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
     final_confs = 1 - beta.cdf(t_eff, p_a + total_proj_s, p_b + (m_n - total_proj_s))
@@ -92,26 +92,23 @@ st.title("🐍 Hybrid Antivenom Trial Monitor")
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
-m3.metric(f"P(>{target_eff:.0%} Target)", f"{p_target:.1%}")
+m3.metric(f"P(>{target_eff:.0%})", f"{p_target:.1%}")
 m4.metric("Safety Risk", f"{p_toxic:.1%}")
 m5.metric("PPoS (Final)", f"{bpp:.1%}")
-m6.metric("ESS (Prior Weight)", f"{prior_alpha + prior_beta:.1f}")
+m6.metric("Prior Weight", f"{prior_alpha + prior_beta:.1f}")
 
 st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}** | Prob Equivalence: **{p_equiv:.1%}**")
 
 st.markdown("---")
 # Action Logic
 if p_toxic > safe_conf_req:
-    st.error(f"🚨 **CRITICAL SAFETY STOP:** Prob. Toxicity ({p_toxic:.1%}) exceeds limit.")
+    st.error(f"🚨 **GOVERNING RULE: SAFETY STOP.** Risk of SAEs ({p_toxic:.1%}) exceeds threshold.")
 elif is_look_point:
-    if bpp < bpp_futility_limit: st.warning(f"🛑 **STOP: FUTILITY TRIGGERED:** Forecast ({bpp:.1%}) below limit.")
-    elif p_target > success_conf_req: st.success(f"✅ **EFFICACY MET:** Evidence for >{target_eff:.0%} efficacy achieved.")
-    else: st.info(f"🛡️ **INTERIM CHECK AT N={total_n}:** No stop triggers hit.")
-elif total_n < min_interim:
-    st.info(f"⏳ **LEAD-IN PHASE:** Waiting for Min N ({min_interim}).")
+    if bpp < bpp_futility_limit: st.warning(f"🛑 **GOVERNING RULE: FUTILITY STOP.** Forecast ({bpp:.1%}) below limit.")
+    elif p_target > success_conf_req: st.success(f"✅ **GOVERNING RULE: SUCCESS STOP.** Evidence achieved.")
+    else: st.info(f"🛡️ **CONTINUE ENROLLMENT:** No stop triggers hit at N={total_n}.")
 else:
-    next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
-    st.info(f"🧬 **MONITORING:** Next scheduled check at N={next_check}.")
+    st.info(f"🧬 **MONITORING:** Lead-in phase or between cohorts.")
 
 # Graph Row
 st.subheader("Statistical Distributions (95% CI Shaded)")
@@ -131,27 +128,10 @@ fig.add_trace(go.Scatter(x=np.concatenate([x_ci_s, x_ci_s[::-1]]), y=np.concaten
 
 fig.add_vline(x=null_eff, line_dash="dot", line_color="gray", annotation_text="Null")
 fig.add_vline(x=target_eff, line_dash="dash", line_color="green", annotation_text="Target")
-fig.add_vline(x=dream_eff, line_dash="dashdot", line_color="blue", annotation_text="Goal")
 fig.add_vline(x=safe_limit, line_dash="dash", line_color="black", annotation_text="Limit")
 
 fig.update_layout(xaxis=dict(range=[0, 1], title="Rate"), height=450, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5), margin=dict(l=0, r=0, t=50, b=0))
 st.plotly_chart(fig, use_container_width=True)
-
-# Risk-Benefit Heatmap Row
-if include_heatmap:
-    st.subheader("⚖️ Risk-Benefit Trade-off Heatmap")
-    grid_res = 50
-    eff_grid = np.linspace(0.2, 0.9, grid_res)
-    saf_grid = np.linspace(0.0, 0.4, grid_res)
-    E, S = np.meshgrid(eff_grid, saf_grid)
-    score = E - (2 * S)
-    fig_heat = px.imshow(score, x=eff_grid, y=saf_grid, labels=dict(x="Efficacy Rate", y="SAE Rate", color="Benefit Score"),
-                         color_continuous_scale="RdYlGn", origin="lower")
-    fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers+text', text=["Current Status"], 
-                                  textposition="top right", marker=dict(color='white', size=12, symbol='x')))
-    fig_heat.add_hline(y=safe_limit, line_dash="dash", line_color="red", annotation_text="Max SAE Threshold")
-    fig_heat.update_layout(height=500)
-    st.plotly_chart(fig_heat, use_container_width=True)
 
 # Breakdown
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
@@ -163,7 +143,6 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Prob > Null ({null_eff:.0%}): {p_null:.1%}")
         st.write(f"Prob > Target ({target_eff:.0%}): {p_target:.1%}")
         st.write(f"Prob > Goal ({dream_eff:.0%}): {p_goal:.1%}")
-        st.write(f"Equivalence Prob: {p_equiv:.1%}")
         st.write(f"Projected Success Range: **{ps_range[0]} - {ps_range[1]} successes**")
     with c2:
         st.markdown("**Safety Summary**")
@@ -171,7 +150,6 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
         
-        # Regulatory Tool: OC Simulation
         st.markdown("---")
         if st.button("Calculate Operating Characteristics"):
             np.random.seed(42)
@@ -180,7 +158,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
             st.warning(f"Est. Type I Error: **{false_positives/1000:.2%}**")
             
     with c3:
-        st.markdown("**Operational Info & Calendar**")
+        st.markdown("**Operational Info**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
         st.write(f"Effective Sample Size (ESS): {prior_alpha + prior_beta:.1f}")
         look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
@@ -204,31 +182,18 @@ for i, (name, ap, bp) in enumerate(priors_list):
         if "Neutral" in name:
             st.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**")
 
-spread = max(target_probs) - min(target_probs)
-st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance).")
-
-# NEW: Separate Regulatory Decision Table expander
+# Boundary Table
 with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
-    st.markdown("This table calculates the exact number of successes required at each future look point to trigger a stop.")
     boundary_data = []
     for lp in look_points:
         if lp <= total_n: continue
         s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
         f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] > bpp_futility_limit), -1)
         boundary_data.append({"N": lp, "Success S ≥": s_req, "Futility S ≤": f_req if f_req != -1 else "Stop"})
-    
     if boundary_data:
         st.table(pd.DataFrame(boundary_data))
-    else:
-        st.write("Trial is at or beyond the final look point.")
 
-# Export
-st.markdown("---")
+# Export Snapshot
 if st.button("📥 Export Results"):
-    report_data = {
-        "Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Bayes Factor"],
-        "Value": [datetime.now().strftime("%Y-%m-%d %H:%M"), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{prior_alpha+prior_beta:.1f}", f"{evidence_shift:.2f}"]
-    }
-    df_report = pd.DataFrame(report_data)
-    csv = df_report.to_csv(index=False).encode('utf-8')
-    st.download_button("Download Snapshot (CSV)", csv, "Trial_Regulatory_Snapshot.csv", "text/csv")
+    report = pd.DataFrame({"Metric": ["N", "Successes", "SAEs", "PPoS"], "Value": [total_n, successes, saes, f"{bpp:.2%}"]})
+    st.download_button("Download", report.to_csv(index=False).encode('utf-8'), "Trial_Snapshot.csv")
