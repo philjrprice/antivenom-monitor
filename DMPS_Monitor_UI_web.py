@@ -61,23 +61,19 @@ p_equiv = beta.cdf(null_eff + equiv_bound, a_eff, b_eff) - beta.cdf(null_eff - e
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
 
-# NEW: Integrated PPoS and BPP Logic
+# Integrated PPoS and BPP Logic
 def get_trial_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
     rem_n = m_n - curr_n
     if rem_n <= 0:
         is_success = (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf
         return 1.0 if is_success else 0.0, 1.0 if is_success else 0.0
     
-    # Monte Carlo simulation for future outcomes
     future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 1000)
     future_successes = np.random.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
     
-    # Final analysis success check (at N_max)
     final_confs = 1 - beta.cdf(t_eff, p_a + total_proj_s, p_b + (m_n - total_proj_s))
     ppos = np.mean(final_confs > s_conf)
-    
-    # BPP uses current success probability
     bpp = np.mean(final_confs > s_conf) 
     return bpp, ppos
 
@@ -93,8 +89,8 @@ m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
 m3.metric(f"P(>{target_eff:.0%} Target)", f"{p_target:.1%}")
 m4.metric("Safety Risk", f"{p_toxic:.1%}")
-m5.metric("PPoS (Final)", f"{ppos:.1%}") # Metric added
-m6.metric("ESS (Prior Weight)", f"{prior_alpha + prior_beta:.1f}") # Metric added
+m5.metric("PPoS (Final)", f"{ppos:.1%}")
+m6.metric("ESS (Prior Weight)", f"{prior_alpha + prior_beta:.1f}")
 
 st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}** | Prob Equivalence: **{p_equiv:.1%}**")
 
@@ -143,37 +139,34 @@ if include_heatmap:
     eff_grid = np.linspace(0.2, 0.9, grid_res)
     saf_grid = np.linspace(0.0, 0.4, grid_res)
     E, S = np.meshgrid(eff_grid, saf_grid)
-    
     score = E - (2 * S)
-    
     fig_heat = px.imshow(score, x=eff_grid, y=saf_grid, labels=dict(x="Efficacy Rate", y="SAE Rate", color="Benefit Score"),
                          color_continuous_scale="RdYlGn", origin="lower")
-    
     fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers+text', text=["Current Status"], 
                                   textposition="top right", marker=dict(color='white', size=12, symbol='x')))
-    
     fig_heat.update_layout(height=500)
     st.plotly_chart(fig_heat, use_container_width=True)
-
 
 # Breakdown
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown("**Efficacy Summary**")
-        st.write(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
-        st.write(f"Prob > Target ({target_eff:.0%}): **{p_target:.1%}**")
-        st.write(f"Prob > Goal ({dream_eff:.0%}): **{p_goal:.1%}**")
+        st.write(f"Mean Efficacy: **{eff_mean:.1%}**") # Added
+        st.write(f"95% CI: **[{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]**") # Added/Updated
+        st.write(f"Prob > Null ({null_eff:.0%}): {p_null:.1%}")
+        st.write(f"Prob > Target ({target_eff:.0%}): {p_target:.1%}")
+        st.write(f"Prob > Goal ({dream_eff:.0%}): {p_goal:.1%}")
         st.write(f"Equivalence Prob: {p_equiv:.1%}")
-        st.write(f"95% CI: [{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]")
     with c2:
         st.markdown("**Safety Summary**")
-        st.write(f"Mean Toxicity: {safe_mean:.1%}")
+        st.write(f"Mean Toxicity: **{safe_mean:.1%}**") # Added
+        st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**") # Added
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
     with c3:
         st.markdown("**Operational Info**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
-        st.write(f"PPoS (Final Analysis): {ppos:.1%}") # Metric added
+        st.write(f"PPoS (Final Analysis): {ppos:.1%}")
         st.write(f"Effective Sample Size (ESS): {prior_alpha + prior_beta:.1f}")
 
 # Sensitivity Analysis
