@@ -6,18 +6,18 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Universal Trial Monitor: Airtight v16", layout="wide")
+st.set_page_config(page_title="Universal Trial Monitor: Airtight", layout="wide")
 
-# --- DATA INTEGRITY GATEWAY ---
+# --- SIDEBAR: INPUT SECTIONS ---
 st.sidebar.header("📋 Current Trial Data")
 max_n_val = st.sidebar.number_input("Maximum Sample Size (N)", 10, 500, 70)
 total_n = st.sidebar.number_input("Total Patients Enrolled", 0, max_n_val, 20)
 successes = st.sidebar.number_input("Total Successes", 0, total_n, value=min(14, total_n))
 saes = st.sidebar.number_input("Serious Adverse Events (SAEs)", 0, total_n, value=min(1, total_n))
 
-# Airtight Validation logic
-if total_n < (successes + saes):
-    st.error("⚠️ Data Entry Error: Total N cannot be less than Successes + SAEs.")
+# --- AIRTIGHT DATA VALIDATION ---
+if successes + (total_n - successes) != total_n:
+    st.error("⚠️ Data Integrity Error: Successes and failures must sum to total N.")
     st.stop()
 
 st.sidebar.markdown("---")
@@ -27,13 +27,14 @@ with st.sidebar.expander("Base Study Priors", expanded=True):
     prior_alpha = st.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1)
     prior_beta = st.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1)
 
-with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
+with st.sidebar.expander("Adaptive Timing & Look Points"):
     min_interim = st.number_input("Min N before first check", 1, max_n_val, 14)
     check_cohort = st.number_input("Check every X patients (Cohort)", 1, 20, 5)
 
 with st.sidebar.expander("Success & Futility Rules"):
     null_eff = st.slider("Null Efficacy (p0) (%)", 0.1, 1.0, 0.50)
     target_eff = st.slider("Target Efficacy (p1) (%)", 0.1, 1.0, 0.60)
+    dream_eff = st.slider("Goal/Dream Efficacy (%)", 0.1, 1.0, 0.70)
     success_conf_req = st.slider("Success Confidence Req.", 0.5, 0.99, 0.74)
     bpp_futility_limit = st.slider("BPP Futility Limit", 0.01, 0.20, 0.05)
 
@@ -41,59 +42,137 @@ with st.sidebar.expander("Safety Rules", expanded=True):
     safe_limit = st.slider("SAE Upper Limit (%)", 0.05, 0.50, 0.15)
     safe_conf_req = st.slider("Safety Stop Confidence", 0.5, 0.99, 0.90)
 
+with st.sidebar.expander("Equivalence & Heatmap Settings"):
+    equiv_bound = st.slider("Equivalence Bound (+/-)", 0.01, 0.10, 0.05)
+    include_heatmap = st.checkbox("Generate Risk-Benefit Heatmap", value=True)
+
 # --- MATH ENGINE ---
 a_eff, b_eff = prior_alpha + successes, prior_beta + (total_n - successes)
 a_safe, b_safe = prior_alpha + saes, prior_beta + (total_n - saes)
 
+p_null = 1 - beta.cdf(null_eff, a_eff, b_eff)
 p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)
+p_goal = 1 - beta.cdf(dream_eff, a_eff, b_eff)
 p_toxic = 1 - beta.cdf(safe_limit, a_safe, b_safe)
-eff_mean = a_eff / (a_eff + b_eff)
+p_equiv = beta.cdf(null_eff + equiv_bound, a_eff, b_eff) - beta.cdf(null_eff - equiv_bound, a_eff, b_eff)
+
+eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
+safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
 
 @st.cache_data
-def get_ppos(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
-    np.random.seed(42) 
+def get_ppos_sim(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
+    np.random.seed(42) # Locked for audit consistency
     rem_n = m_n - curr_n
-    if rem_n <= 0: return (1.0 if (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf else 0.0)
+    if rem_n <= 0:
+        return (1.0 if (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf else 0.0), [curr_s, curr_s]
     future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 5000)
     future_successes = np.random.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
     final_confs = 1 - beta.cdf(t_eff, p_a + total_proj_s, p_b + (m_n - total_proj_s))
-    return np.mean(final_confs > s_conf)
+    return np.mean(final_confs > s_conf), [int(np.percentile(total_proj_s, 5)), int(np.percentile(total_proj_s, 95))]
 
-ppos = get_ppos(successes, total_n, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)
+bpp, ps_range = get_ppos_sim(successes, total_n, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)
 
-# --- MAIN UI ---
-st.title("🛡️ Airtight Bayesian Trial Monitor")
+# Evidence Strength (Bayes Factor)
+skep_a, skep_b = 1 + successes, 4 + (total_n - successes)
+skep_prob = 1 - beta.cdf(target_eff, skep_a, skep_b)
+evidence_shift = p_target / skep_prob if skep_prob > 0 else 1.0
 
-# Action Logic
+# --- MAIN DASHBOARD ---
+st.title("🛡️ Airtight Hybrid Trial Monitor")
+
+# Action Logic (Hierarchical)
 is_look_point = (total_n >= min_interim) and ((total_n - min_interim) % check_cohort == 0)
 
 if p_toxic > safe_conf_req:
-    st.error(f"🛑 **GOVERNING RULE: SAFETY STOP.** SAE Risk ({p_toxic:.1%}) ≥ {safe_conf_req:.0%}.")
+    st.error(f"🛑 **GOVERNING RULE: SAFETY STOP.** SAE Risk ({p_toxic:.1%}) ≥ {safe_conf_req:.0%}. Discontinue enrollment.")
 elif is_look_point:
-    if ppos < bpp_futility_limit: st.warning(f"⚠️ **GOVERNING RULE: FUTILITY STOP.** PPoS ({ppos:.1%}) < {bpp_futility_limit:.0%}.")
-    elif p_target > success_conf_req: st.success(f"✅ **GOVERNING RULE: EFFICACY SUCCESS.** Prob. Efficacy ({p_target:.1%}) ≥ {success_conf_req:.0%}.")
-    else: st.info("🧬 **STATUS: CONTINUE.** Current data does not meet stop criteria.")
+    if bpp < bpp_futility_limit: 
+        st.warning(f"⚠️ **GOVERNING RULE: FUTILITY STOP.** PPoS ({bpp:.1%}) < {bpp_futility_limit:.0%}.")
+    elif p_target > success_conf_req: 
+        st.success(f"✅ **GOVERNING RULE: EFFICACY SUCCESS.** Prob. Efficacy ({p_target:.1%}) ≥ {success_conf_req:.1%}.")
+    else: 
+        st.info("🧬 **STATUS: CONTINUE.** Data is indeterminate; proceed to next cohort.")
 else:
-    st.info("⌛ **STATUS: MONITORING.** Trial between scheduled interim looks.")
+    st.info("⌛ **STATUS: MONITORING.** Trial is between scheduled look points.")
 
-# Boundary Visualization (New)
-st.subheader("📈 Decision Trajectory")
-look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
-bounds = []
-for lp in look_points:
-    s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), lp)
-    bounds.append({"N": lp, "Success Threshold": s_req})
+# Metrics Row
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Enrolled N", f"{total_n}/{max_n_val}")
+m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
+m3.metric(f"P(>{target_eff:.0%})", f"{p_target:.1%}")
+m4.metric("Safety Risk", f"{p_toxic:.1%}")
+m5.metric("PPoS", f"{bpp:.1%}")
 
-df_bounds = pd.DataFrame(bounds)
-fig_traj = px.line(df_bounds, x="N", y="Success Threshold", title="Success Boundary (S required at N)")
-fig_traj.add_scatter(x=[total_n], y=[successes], mode='markers', name='Current Trial', marker=dict(size=12, color='red'))
-st.plotly_chart(fig_traj, use_container_width=True)
+st.markdown("---")
 
-# Final Audit Export
-if st.button("📥 Generate Regulatory Audit Log"):
-    log = pd.DataFrame({
-        "Variable": ["Timestamp", "Enrolled N", "Successes", "SAEs", "PPoS", "Safety Risk"],
-        "Value": [datetime.now(), total_n, successes, saes, f"{ppos:.4f}", f"{p_toxic:.4f}"]
+# Visuals
+st.subheader("Statistical Distributions & Shaded 95% CI")
+x = np.linspace(0, 1, 500)
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=x, y=beta.pdf(x, a_eff, b_eff), name="Efficacy Belief", line=dict(color='#2980b9', width=3)))
+fig.add_trace(go.Scatter(x=x, y=beta.pdf(x, a_safe, b_safe), name="Safety Belief", line=dict(color='#c0392b', width=3)))
+fig.add_vline(x=target_eff, line_dash="dash", line_color="green", annotation_text="Target")
+fig.add_vline(x=safe_limit, line_dash="dash", line_color="red", annotation_text="Safety Limit")
+fig.update_layout(height=400, margin=dict(l=0, r=0, t=20, b=0), xaxis_title="Efficacy/SAE Rate")
+st.plotly_chart(fig, use_container_width=True)
+
+# Heatmap
+if include_heatmap:
+    st.subheader("⚖️ Risk-Benefit Trade-off Heatmap")
+    grid_res = 50
+    eff_grid = np.linspace(0.2, 0.9, grid_res)
+    saf_grid = np.linspace(0.0, 0.4, grid_res)
+    E, S = np.meshgrid(eff_grid, saf_grid)
+    score = E - (2 * S)
+    fig_heat = px.imshow(score, x=eff_grid, y=saf_grid, labels=dict(x="Efficacy Rate", y="SAE Rate", color="Benefit Score"),
+                         color_continuous_scale="RdYlGn", origin="lower")
+    fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers', marker=dict(color='white', size=12, symbol='x')))
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+# Breakdown & Simulation
+with st.expander("📊 Full Statistical Breakdown & Sequential Alpha", expanded=True):
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("**Efficacy Summary**")
+        st.write(f"95% CI: **[{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]**")
+        st.write(f"Prob > Null: {p_null:.1%}")
+        st.write(f"Bayes Factor: **{evidence_shift:.2f}x**")
+    with c2:
+        st.markdown("**Sequential Alpha Monitor**")
+        if st.button("Simulate Type I Error"):
+            np.random.seed(42)
+            look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
+            fp = 0
+            for _ in range(1000):
+                data = np.random.binomial(1, null_eff, max_n_val)
+                for lp in look_points:
+                    s = sum(data[:lp])
+                    if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > success_conf_req:
+                        fp += 1
+                        break
+            st.warning(f"Estimated Alpha Inflation: **{fp/1000:.1%}**")
+    with c3:
+        st.markdown("**Operational Info**")
+        st.write(f"PPoS Success Range: **{ps_range[0]} - {ps_range[1]}**")
+        st.write(f"Prior ESS: {prior_alpha + prior_beta:.1f}")
+
+# Decision Boundary Table
+with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
+    look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
+    boundary_data = []
+    for lp in look_points:
+        if lp <= total_n: continue
+        s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "Unreachable")
+        f_req = next((s for s in reversed(range(lp+1)) if get_ppos_sim(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] > bpp_futility_limit), "Stop")
+        boundary_data.append({"N": lp, "Success S ≥": s_req, "Futility S ≤": f_req})
+    st.table(pd.DataFrame(boundary_data))
+
+# Export
+st.markdown("---")
+if st.button("📥 Export Audit-Ready Snapshot"):
+    report = pd.DataFrame({
+        "Metric": ["Timestamp", "N", "Successes", "SAEs", "Prob > Target", "PPoS", "Bayes Factor"],
+        "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{p_target:.4%}", f"{bpp:.4%}", f"{evidence_shift:.2f}"]
     })
-    st.download_button("Download Audit Trail", log.to_csv(index=False).encode('utf-8'), "Trial_Audit_v16.csv")
+    st.download_button("Download CSV", report.to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
