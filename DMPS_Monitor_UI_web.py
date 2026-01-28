@@ -261,5 +261,11 @@ if st.button("📥 Export Audit-Ready Snapshot"):
             f"{bpp:.2%}", f"{a_eff+b_eff:.1f}"
         ]
     }
+st.download_button(
+        label="Download CSV",
+        data=pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'),
+        file_name=f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime='text/csv'
+    )
 
 
