@@ -119,7 +119,8 @@ else:
 st.subheader("📈 Trial Decision Corridors")
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
-succ_line, fut_line = [], []
+succ_line.append(s_req if s_req <= lp else None) # Hide success line if impossible
+    fut_line.append(max(0, f_req)) # Don't show -1 on the chart
 
 for lp in viz_n:
     # Success: Smallest S where confidence > requirement
@@ -227,7 +228,7 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         # Success threshold
         s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
         
-        # Futility threshold refinement: Highest S that triggers a stop
+        # Futility threshold: Highest S that triggers a stop
         f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] <= bpp_futility_limit), -1)
         
         # Safety threshold
@@ -240,16 +241,19 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
             "Safety Stop SAEs ≥": safe_req
         })
     
-    # This must be OUTSIDE the for-loop but INSIDE the expander
+    # Table logic moved OUTSIDE the for-loop
     if boundary_data: 
         st.table(pd.DataFrame(boundary_data))
     else: 
         st.write("Trial is at the final analysis point.")
 
 if st.button("📥 Export Audit-Ready Snapshot"):
-    report_data = {"Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Robustness Spread"],
-                   "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{a_eff+b_eff:.1f}", f"{spread:.2%}%"]}
-    st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
+    # Convert boundary table to a string for the CSV
+    rules_summary = str(boundary_data) 
+    report_data = {
+        "Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "Rules Followed"],
+        "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", rules_summary]
+    }
 
 
 
