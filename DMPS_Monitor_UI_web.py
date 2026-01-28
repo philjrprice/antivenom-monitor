@@ -282,7 +282,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         if st.button("Calculate Sequential Type I Error"):
             np.random.seed(42)
             fp_count = 0
-            for _ in range(1000):
+            for _ in range(10000):
                 trial_outcomes = np.random.binomial(1, null_eff, max_n_val)
                 for lp in look_points:
                     s = sum(trial_outcomes[:lp])
@@ -384,4 +384,5 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
 
