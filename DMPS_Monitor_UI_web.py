@@ -36,7 +36,6 @@ with st.sidebar.expander("Success & Futility Rules"):
 # 4. Safety Rules (FIXED NESTING)
 with st.sidebar.expander("Safety Rules", expanded=True):
     safe_limit = st.slider("SAE Upper Limit (%)", 0.05, 0.50, 0.15)
-    # This slider is now explicitly inside this block
     safe_conf_req = st.sidebar.slider("Safety Stop Confidence", 0.5, 0.99, 0.90)
 
 # 5. Sensitivity
