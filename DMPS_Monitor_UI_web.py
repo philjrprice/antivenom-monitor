@@ -18,8 +18,8 @@ st.sidebar.header("⚙️ Study Parameters")
 
 with st.sidebar.expander("Base Study Priors", expanded=True):
     # UPDATED: Changed to sliders for a more "Universal Tool" feel
-    prior_alpha = st.sidebar.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1, help="Virtual successes before trial data.")
-    prior_beta = st.sidebar.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1, help="Virtual failures before trial data.")
+    prior_alpha = st.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1, help="Virtual successes before trial data.")
+    prior_beta = st.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1, help="Virtual failures before trial data.")
 
 with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
     min_interim = st.number_input("Min N before first check", 1, max_n_val, 14)
@@ -157,3 +157,4 @@ for i, (name, ap, bp) in enumerate(priors_list):
 
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance between prior mindsets).")
+
