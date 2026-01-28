@@ -2,6 +2,9 @@ import streamlit as st
 import numpy as np
 from scipy.stats import beta
 import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+from datetime import datetime
 
 st.set_page_config(page_title="Universal Trial Monitor: Hybrid", layout="wide")
 
@@ -9,7 +12,6 @@ st.set_page_config(page_title="Universal Trial Monitor: Hybrid", layout="wide")
 st.sidebar.header("📋 Current Trial Data")
 max_n_val = st.sidebar.number_input("Maximum Sample Size (N)", 10, 500, 70)
 total_n = st.sidebar.number_input("Total Patients Enrolled", 0, max_n_val, 20)
-# FIXED: Using min() to prevent StreamlitValueAboveMaxError
 successes = st.sidebar.number_input("Total Successes", 0, total_n, value=min(14, total_n))
 saes = st.sidebar.number_input("Serious Adverse Events (SAEs)", 0, total_n, value=min(1, total_n))
 
@@ -17,9 +19,8 @@ st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Study Parameters")
 
 with st.sidebar.expander("Base Study Priors", expanded=True):
-    # UPDATED: Using sliders for the universal prior adjustment
-    prior_alpha = st.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1)
-    prior_beta = st.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1)
+    prior_alpha = st.sidebar.slider("Prior Successes (Alpha)", 0.1, 10.0, 1.0, step=0.1)
+    prior_beta = st.sidebar.slider("Prior Failures (Beta)", 0.1, 10.0, 1.0, step=0.1)
 
 with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
     min_interim = st.number_input("Min N before first check", 1, max_n_val, 14)
@@ -40,6 +41,11 @@ with st.sidebar.expander("Sensitivity Prior Settings"):
     opt_p = st.slider("Optimistic Prior Weight", 1, 10, 4)
     skp_p = st.slider("Skeptical Prior Weight", 1, 10, 4)
 
+# --- NEW: ADVANCED FEATURE SETTINGS ---
+with st.sidebar.expander("Equivalence & Export Settings"):
+    equiv_bound = st.slider("Equivalence Bound (+/-)", 0.01, 0.10, 0.05)
+    include_heatmap = st.checkbox("Generate Risk-Benefit Heatmap", value=True)
+
 # --- MATH ENGINE ---
 a_eff, b_eff = prior_alpha + successes, prior_beta + (total_n - successes)
 a_safe, b_safe = prior_alpha + saes, prior_beta + (total_n - saes)
@@ -48,6 +54,9 @@ p_null = 1 - beta.cdf(null_eff, a_eff, b_eff)
 p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)
 p_goal = 1 - beta.cdf(dream_eff, a_eff, b_eff)
 p_toxic = 1 - beta.cdf(safe_limit, a_safe, b_safe)
+
+# NEW: Equivalence Calculation
+p_equiv = beta.cdf(null_eff + equiv_bound, a_eff, b_eff) - beta.cdf(null_eff - equiv_bound, a_eff, b_eff)
 
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
@@ -67,17 +76,19 @@ is_look_point = (total_n >= min_interim) and ((total_n - min_interim) % check_co
 # --- MAIN DASHBOARD ---
 st.title("🐍 Hybrid Antivenom Trial Monitor")
 
+# Header Metrics
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
 m3.metric(f"P(>{target_eff:.0%} Target)", f"{p_target:.1%}")
 m4.metric("Safety Risk", f"{p_toxic:.1%}")
 m5.metric("BPP (Forecast)", f"{bpp:.1%}")
-m6.metric(f"P(>{dream_eff:.0%} Goal)", f"{p_goal:.1%}")
+m6.metric("ESS (Prior Weight)", f"{prior_alpha + prior_beta:.1f}")
 
-st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
+st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}** | Prob Equivalence: **{p_equiv:.1%}**")
 
 st.markdown("---")
+# Action Logic
 if p_toxic > safe_conf_req:
     st.error(f"🚨 **CRITICAL SAFETY STOP:** Prob. Toxicity ({p_toxic:.1%}) exceeds limit.")
 elif is_look_point:
@@ -92,7 +103,6 @@ else:
 
 # Graph Row
 st.subheader("Statistical Distributions (95% CI Shaded)")
-
 x = np.linspace(0, 1, 500)
 y_eff, y_safe = beta.pdf(x, a_eff, b_eff), beta.pdf(x, a_safe, b_safe)
 fig = go.Figure()
@@ -115,6 +125,28 @@ fig.add_vline(x=safe_limit, line_dash="dash", line_color="black", annotation_tex
 fig.update_layout(xaxis=dict(range=[0, 1], title="Rate"), height=450, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5), margin=dict(l=0, r=0, t=50, b=0))
 st.plotly_chart(fig, use_container_width=True)
 
+# NEW: Risk-Benefit Heatmap Row
+if include_heatmap:
+    st.subheader("⚖️ Risk-Benefit Trade-off Heatmap")
+    grid_res = 50
+    eff_grid = np.linspace(0.2, 0.9, grid_res)
+    saf_grid = np.linspace(0.0, 0.4, grid_res)
+    E, S = np.meshgrid(eff_grid, saf_grid)
+    
+    # Simple regulatory scoring: Efficacy - (2 * Safety Risk)
+    score = E - (2 * S)
+    
+    fig_heat = px.imshow(score, x=eff_grid, y=saf_grid, labels=dict(x="Efficacy Rate", y="SAE Rate", color="Benefit Score"),
+                         color_continuous_scale="RdYlGn", origin="lower")
+    
+    # Add current point
+    fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers+text', text=["Current Trial"], 
+                                  textposition="top right", marker=dict(color='white', size=12, symbol='x')))
+    
+    fig_heat.update_layout(height=500)
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+
 # Breakdown
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
@@ -123,28 +155,26 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
         st.write(f"Prob > Target ({target_eff:.0%}): **{p_target:.1%}**")
         st.write(f"Prob > Goal ({dream_eff:.0%}): **{p_goal:.1%}**")
+        st.write(f"Equivalence Prob: {p_equiv:.1%}")
         st.write(f"95% CI: [{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]")
     with c2:
         st.markdown("**Safety Summary**")
         st.write(f"Mean Toxicity: {safe_mean:.1%}")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
-    with c3: # FIXED: Changed from col3 to c3 to resolve NameError
+    with c3:
         st.markdown("**Operational Info**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
-        st.write(f"Prior Strength: {prior_alpha + prior_beta:.1f} pts")
+        st.write(f"Effective Sample Size (ESS): {prior_alpha + prior_beta:.1f}")
 
 # Sensitivity Analysis
 st.subheader("🧪 Sensitivity Analysis")
-
 priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (f"Skeptical (1:{skp_p})", 1, skp_p)]
 cols, target_probs = st.columns(3), []
 for i, (name, ap, bp) in enumerate(priors_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
-    
     p_n_s = 1 - beta.cdf(null_eff, ae_s, be_s)
     p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
     p_g_s = 1 - beta.cdf(dream_eff, ae_s, be_s)
-    
     target_probs.append(p_t_s)
     with cols[i]:
         st.info(f"**{name}**")
@@ -154,3 +184,14 @@ for i, (name, ap, bp) in enumerate(priors_list):
 
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance between prior mindsets).")
+
+# NEW: Regulatory Data Export
+st.markdown("---")
+if st.button("📥 Generate Regulatory Snapshot"):
+    report_data = {
+        "Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "BPP Forecast", "ESS"],
+        "Value": [datetime.now().strftime("%Y-%m-%d %H:%M"), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{prior_alpha+prior_beta:.1f}"]
+    }
+    df_report = pd.DataFrame(report_data)
+    csv = df_report.to_csv(index=False).encode('utf-8')
+    st.download_button("Download Snapshot (CSV)", csv, "Trial_Regulatory_Snapshot.csv", "text/csv")
