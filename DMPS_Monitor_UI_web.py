@@ -235,9 +235,9 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         
         boundary_data.append({
             "N": lp, 
-            "Success S ≥": s_req, 
-            "Futility S ≤": f_req if f_req != -1 else "No Stop", 
-            "Safety SAEs ≥": safe_req
+            "Success Stop S ≥": s_req, 
+            "Futility Stop S ≤": f_req if f_req != -1 else "No Stop", 
+            "Safety Stop SAEs ≥": safe_req
         })
     
     # This must be OUTSIDE the for-loop but INSIDE the expander
@@ -250,6 +250,7 @@ if st.button("📥 Export Audit-Ready Snapshot"):
     report_data = {"Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Robustness Spread"],
                    "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{a_eff+b_eff:.1f}", f"{spread:.2%}%"]}
     st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
+
 
 
 
