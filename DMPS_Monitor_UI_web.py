@@ -214,7 +214,7 @@ for i, (name, ap, bp) in enumerate(priors_list):
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
         st.write(f"Prob > Goal: **{p_g_s:.1%}**")
         if "Neutral" in name:
-            t.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**", help="The ratio of the likelihood of the alternative hypothesis (Target Efficacy) to the null hypothesis. A value >1 indicates the data supports the treatment effect.")
+           t.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**", help="The ratio of the likelihood of the alternative hypothesis (Target Efficacy) to the null hypothesis. A value >1 indicates the data supports the treatment effect.")
 
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** ({spread:.1%} variance between prior mindsets).")
@@ -262,6 +262,7 @@ if st.button("📥 Export Audit-Ready Snapshot"):
             f"{bpp:.2%}", f"{a_eff+b_eff:.1f}"
         ]
     }
+
 
 
 
