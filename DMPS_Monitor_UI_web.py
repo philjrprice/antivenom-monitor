@@ -6,7 +6,7 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Universal Trial Monitor: Airtight Pro", layout="wide")
+st.set_page_config(page_title="AVF - Single Arm Bayesian Trial Monitor", layout="wide")
 
 # ==========================================
 # 1. SIDEBAR INPUTS (With Explanatory Tooltips)
@@ -402,6 +402,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
 
 
 
