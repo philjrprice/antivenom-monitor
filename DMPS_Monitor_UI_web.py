@@ -237,7 +237,7 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         "Success S ≥": s_req, 
         "Futility S ≤": f_req if f_req != -1 else "No Stop", # Changed label for clarity
         "Safety SAEs ≥": safe_req
-    })
+     })
     if boundary_data: st.table(pd.DataFrame(boundary_data))
     else: st.write("Trial is at the final analysis point.")
 
@@ -245,6 +245,7 @@ if st.button("📥 Export Audit-Ready Snapshot"):
     report_data = {"Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Robustness Spread"],
                    "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{a_eff+b_eff:.1f}", f"{spread:.2%}%"]}
     st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
+
 
 
 
