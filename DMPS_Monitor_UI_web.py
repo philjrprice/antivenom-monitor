@@ -237,9 +237,9 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         
         boundary_data.append({
             "N": lp, 
-            "Success S ≥": s_req, 
-            "Futility S ≤": f_req if f_req != -1 else "No Stop", 
-            "Safety SAEs ≥": safe_req
+            "Success Stop S ≥": s_req, 
+            "Futility Stop S ≤": f_req if f_req != -1 else "No Stop", 
+            "Safety Stop SAEs ≥": safe_req
         })
     
 
@@ -271,3 +271,4 @@ if st.button("📥 Export Audit-Ready Snapshot"):
         pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), 
         f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv"
     )
+
