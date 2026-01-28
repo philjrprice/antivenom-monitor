@@ -279,8 +279,17 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Mean Toxicity: **{safe_mean:.1%}**") 
         st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**") 
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
-        # DYNAMIC TYPE I ERROR SIMULATION
-        st.markdown("---")
+      
+    with c3:
+        st.markdown("**Operational Info**")
+        st.write(f"BPP Success Forecast: **{bpp:.1%}**")
+        st.write(f"PPoS (Predicted Prob): **{bpp:.1%}**") 
+        st.write(f"ESS (Effective Sample N): **{a_eff + b_eff:.1f}**") 
+        st.write(f"Look Points: **N = {', '.join(map(str, look_points))}**")
+# ==========================================
+# 9. TYPE I ERROR SIMULATION (Monte Carlo)
+# ==========================================
+st.markdown("---")
 st.subheader("🧪 Design Integrity Check")
 num_sims = 10000 
 if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
@@ -301,12 +310,10 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
         type_i_estimate = fp_count / num_sims
         st.warning(f"Estimated Sequential Type I Error: **{type_i_estimate:.2%}**")
         st.caption(f"This is the 'Alpha' risk: the chance of a False Positive given the current look-points and success thresholds.")
-    with c3:
-        st.markdown("**Operational Info**")
-        st.write(f"BPP Success Forecast: **{bpp:.1%}**")
-        st.write(f"PPoS (Predicted Prob): **{bpp:.1%}**") 
-        st.write(f"ESS (Effective Sample N): **{a_eff + b_eff:.1f}**") 
-        st.write(f"Look Points: **N = {', '.join(map(str, look_points))}**")
+
+# ==========================================
+# 10. Sensitivity Analysis
+# ==========================================
 
 st.subheader("🧪 Sensitivity Analysis & Robustness")
 priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (f"Skeptical (1:{skp_p})", 1, skp_p)]
@@ -332,7 +339,7 @@ spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** ({spread:.1%} variance between prior mindsets).")
 
 # ==========================================
-# 9. REGULATORY TABLE (Corrected Indentation)
+# 11. REGULATORY TABLE (Corrected Indentation)
 # ==========================================
 with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
     boundary_data = []
@@ -365,7 +372,7 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
 st.markdown("---")
 
 # ==========================================
-# 10. EXPORT / AUDIT SNAPSHOT
+# 12. EXPORT / AUDIT SNAPSHOT
 # ==========================================
 if st.button("📥 Prepare Audit-Ready Snapshot"):
     # 1. Capture the data into a dictionary
@@ -395,6 +402,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
 
 
 
