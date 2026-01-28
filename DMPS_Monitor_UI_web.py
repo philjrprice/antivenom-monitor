@@ -122,8 +122,12 @@ viz_n = np.array(look_points)
 succ_line, fut_line = [], []
 
 for lp in viz_n:
+    # Success: Smallest S where confidence > requirement
     s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), lp+1)
-    f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] > bpp_futility_limit), -1)
+    
+    # Futility Refinement: Highest S where BPP is still BELOW the limit
+    f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] <= bpp_futility_limit), -1)
+    
     succ_line.append(s_req)
     fut_line.append(f_req)
 
@@ -216,12 +220,24 @@ st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 
 
 with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
     boundary_data = []
-    for lp in look_points:
-        if lp <= total_n: continue
-        s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
-        f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] <= bpp_futility_limit), -1)
-        safe_req = next((s for s in range(lp+1) if (1 - beta.cdf(safe_limit, prior_alpha+s, prior_beta+(lp-s))) > safe_conf_req), "N/A")
-        boundary_data.append({"N": lp, "Success S ≥": s_req, "Futility S ≤": f_req if f_req != -1 else "Stop", "Safety SAEs ≥": safe_req})
+  for lp in look_points:
+    if lp <= total_n: continue
+    
+    # Success threshold
+    s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
+    
+    # Futility threshold refinement: Highest S that triggers a stop
+    f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] <= bpp_futility_limit), -1)
+    
+    # Safety threshold
+    safe_req = next((s for s in range(lp+1) if (1 - beta.cdf(safe_limit, prior_alpha+s, prior_beta+(lp-s))) > safe_conf_req), "N/A")
+    
+    boundary_data.append({
+        "N": lp, 
+        "Success S ≥": s_req, 
+        "Futility S ≤": f_req if f_req != -1 else "No Stop", # Changed label for clarity
+        "Safety SAEs ≥": safe_req
+    })
     if boundary_data: st.table(pd.DataFrame(boundary_data))
     else: st.write("Trial is at the final analysis point.")
 
@@ -229,5 +245,6 @@ if st.button("📥 Export Audit-Ready Snapshot"):
     report_data = {"Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Robustness Spread"],
                    "Value": [datetime.now().isoformat(), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{bpp:.2%}", f"{a_eff+b_eff:.1f}", f"{spread:.2%}%"]}
     st.download_button("Download CSV", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv")
+
 
 
