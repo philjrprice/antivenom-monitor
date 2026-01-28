@@ -117,7 +117,7 @@ else:
     next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
     st.info(f"🧬 **STATUS: MONITORING.** Trial between cohorts. Next check at N={next_check}.")
 
-# --- NEW: Visual Decision Corridors ---
+# --- Visual Decision Corridors ---
 st.subheader("📈 Trial Decision Corridors")
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
@@ -136,7 +136,7 @@ fig_corr.add_trace(go.Scatter(x=[total_n], y=[successes], mode='markers+text', t
 fig_corr.update_layout(xaxis_title="Sample Size (N)", yaxis_title="Successes (S)", height=400, margin=dict(t=20, b=0))
 st.plotly_chart(fig_corr, use_container_width=True)
 
-# Graph Row (Preserving shaded CIs from V17)
+# Graph Row
 st.subheader("Statistical Distributions (95% CI Shaded)")
 x = np.linspace(0, 1, 500)
 fig = go.Figure()
@@ -168,6 +168,10 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.markdown("**Efficacy Summary**")
         st.write(f"Mean Efficacy: **{eff_mean:.1%}**") 
         st.write(f"95% CI: **[{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]**")
+        st.write(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
+        st.write(f"Prob > Target ({target_eff:.0%}): **{p_target:.1%}**")
+        st.write(f"Prob > Goal ({dream_eff:.0%}): **{p_goal:.1%}**")
+        st.write(f"Prob Equivalence: **{p_equiv:.1%}**")
         st.write(f"Projected Success Range: **{ps_range[0]} - {ps_range[1]} successes**")
     with c2:
         st.markdown("**Safety Summary**")
@@ -194,14 +198,20 @@ priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (
 cols, target_probs = st.columns(3), []
 for i, (name, ap, bp) in enumerate(priors_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
+    # Calculation block for comprehensive stats
+    m_eff_s = ae_s / (ae_s + be_s)
+    p_n_s = 1 - beta.cdf(null_eff, ae_s, be_s)
     p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
+    p_g_s = 1 - beta.cdf(dream_eff, ae_s, be_s)
     target_probs.append(p_t_s)
     with cols[i]:
         st.info(f"**{name}**")
+        st.write(f"Mean Efficacy: **{m_eff_s:.1%}**")
+        st.write(f"Prob > Null: **{p_n_s:.1%}**")
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
+        st.write(f"Prob > Goal: **{p_g_s:.1%}**")
         if "Neutral" in name: st.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**")
 
-# --- NEW: Robustness Interpretation ---
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** ({spread:.1%} variance between prior mindsets).")
 
@@ -211,7 +221,6 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
         if lp <= total_n: continue
         s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
         f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] > bpp_futility_limit), -1)
-        # NEW: Safety Boundary Calculation
         safe_req = next((s for s in range(lp+1) if (1 - beta.cdf(safe_limit, prior_alpha+s, prior_beta+(lp-s))) > safe_conf_req), "N/A")
         boundary_data.append({"N": lp, "Success S ≥": s_req, "Futility S ≤": f_req if f_req != -1 else "Stop", "Safety SAEs ≥": safe_req})
     if boundary_data: st.table(pd.DataFrame(boundary_data))
