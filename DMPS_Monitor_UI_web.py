@@ -213,7 +213,6 @@ for i, (name, ap, bp) in enumerate(priors_list):
         st.write(f"Prob > Null: **{p_n_s:.1%}**")
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
         st.write(f"Prob > Goal: **{p_g_s:.1%}**")
-        st.markdown(f"ESS (Effective Sample N): **{a_eff + b_eff:.1f}**")
         if "Neutral" in name: 
             st.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**")
             st.caption("BF₁₀: Ratio of Likelihood (Treatment vs Null)")
@@ -264,6 +263,7 @@ if st.button("📥 Export Audit-Ready Snapshot"):
             f"{bpp:.2%}", f"{a_eff+b_eff:.1f}"
         ]
     }
+
 
 
 
