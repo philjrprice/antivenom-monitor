@@ -60,8 +60,9 @@ p_equiv = beta.cdf(null_eff + equiv_bound, a_eff, b_eff) - beta.cdf(null_eff - e
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
 
-# Forecasts and Success Range logic
+# Forecasts and Success Range logic with Fixed Seed for Reproducibility
 def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
+    np.random.seed(42) # Regulatory improvement: ensure stability
     rem_n = m_n - curr_n
     if rem_n <= 0:
         is_success = (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf
@@ -78,7 +79,7 @@ def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
 
 bpp, ppos, ps_range = get_enhanced_forecasts(successes, total_n, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)
 
-# Evidence Shift Calculation (moved logic)
+# Evidence Shift Calculation
 skep_a, skep_b = 1 + successes, skp_p + (total_n - successes)
 skep_prob = 1 - beta.cdf(target_eff, skep_a, skep_b)
 evidence_shift = p_target / skep_prob if skep_prob > 0 else 1.0
@@ -149,12 +150,11 @@ if include_heatmap:
                          color_continuous_scale="RdYlGn", origin="lower")
     fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers+text', text=["Current Status"], 
                                   textposition="top right", marker=dict(color='white', size=12, symbol='x')))
-    # Safety Boundary Line on Heatmap
     fig_heat.add_hline(y=safe_limit, line_dash="dash", line_color="red", annotation_text="Max SAE Threshold")
     fig_heat.update_layout(height=500)
     st.plotly_chart(fig_heat, use_container_width=True)
 
-# Breakdown - PRESERVING ALL STATS FROM PREVIOUS VERSION
+# Breakdown
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -171,12 +171,20 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Mean Toxicity: **{safe_mean:.1%}**") 
         st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
+        
+        # Regulatory Tool: OC Simulation
+        st.markdown("---")
+        if st.button("Calculate Operating Characteristics"):
+            np.random.seed(42)
+            null_sims = np.random.binomial(max_n_val, null_eff, 1000)
+            false_positives = sum([ (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (max_n_val - s))) > success_conf_req for s in null_sims])
+            st.warning(f"Est. Type I Error: **{false_positives/1000:.2%}** (at current success req.)")
+            
     with c3:
         st.markdown("**Operational Info & Calendar**")
         st.write(f"BPP Success Forecast: {bpp:.1%}")
         st.write(f"PPoS (Final Analysis): {ppos:.1%}")
         st.write(f"Effective Sample Size (ESS): {prior_alpha + prior_beta:.1f}")
-        # Interim calendar list
         look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
         st.write(f"Scheduled Checks: **N = {', '.join(map(str, look_points))}**")
 
@@ -195,9 +203,9 @@ for i, (name, ap, bp) in enumerate(priors_list):
         st.write(f"Prob > Null: {p_n_s:.1%}")
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
         st.write(f"Prob > Goal: {p_g_s:.1%}")
-        # NEW: Evidence shift moved here under Neutral
         if "Neutral" in name:
-            st.write(f"Evidence Strength: **{evidence_shift:.2f}x**")
+            # Regulatory improvement: formal labeling
+            st.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**")
 
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance between prior mindsets).")
@@ -206,10 +214,9 @@ st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 
 st.markdown("---")
 if st.button("📥 Export Results"):
     report_data = {
-        "Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Evidence Shift"],
+        "Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS", "Bayes Factor"],
         "Value": [datetime.now().strftime("%Y-%m-%d %H:%M"), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{ppos:.2%}", f"{prior_alpha+prior_beta:.1f}", f"{evidence_shift:.2f}"]
     }
     df_report = pd.DataFrame(report_data)
     csv = df_report.to_csv(index=False).encode('utf-8')
     st.download_button("Download Snapshot (CSV)", csv, "Trial_Regulatory_Snapshot.csv", "text/csv")
-
