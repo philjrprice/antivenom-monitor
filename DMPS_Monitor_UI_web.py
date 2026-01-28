@@ -41,10 +41,6 @@ with st.sidebar.expander("Sensitivity Prior Settings"):
     opt_p = st.slider("Optimistic Prior Weight", 1, 10, 4)
     skp_p = st.slider("Skeptical Prior Weight", 1, 10, 4)
 
-with st.sidebar.expander("Advanced Analytics"):
-    equiv_bound = st.slider("Equivalence Bound (+/-)", 0.01, 0.10, 0.05)
-    include_heatmap = st.checkbox("Generate Risk-Benefit Heatmap", value=True)
-
 # --- MATH ENGINE ---
 a_eff, b_eff = prior_alpha + successes, prior_beta + (total_n - successes)
 a_safe, b_safe = prior_alpha + saes, prior_beta + (total_n - saes)
@@ -54,19 +50,18 @@ p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)
 p_goal = 1 - beta.cdf(dream_eff, a_eff, b_eff)
 p_toxic = 1 - beta.cdf(safe_limit, a_safe, b_safe)
 
-p_equiv = beta.cdf(null_eff + equiv_bound, a_eff, b_eff) - beta.cdf(null_eff - equiv_bound, a_eff, b_eff)
-
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 safe_mean, safe_ci = a_safe / (a_safe + b_safe), beta.ppf([0.025, 0.975], a_safe, b_safe)
 
+# Bayesian Predictive Probability of Success (PPoS)
 def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
-    np.random.seed(42) # Regulatory standard: reproducible forecasting
+    np.random.seed(42) # Ensure audit reproducibility
     rem_n = m_n - curr_n
     if rem_n <= 0:
         is_success = (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf
         return 1.0 if is_success else 0.0, [curr_s, curr_s]
     
-    future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 1000)
+    future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 2000)
     future_successes = np.random.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
     final_confs = 1 - beta.cdf(t_eff, p_a + total_proj_s, p_b + (m_n - total_proj_s))
@@ -77,156 +72,89 @@ def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
 
 bpp, ps_range = get_enhanced_forecasts(successes, total_n, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)
 
-# Evidence Shift Calculation (Bayes Factor)
+# Bayes Factor calculation for evidence strength
 skep_a, skep_b = 1 + successes, skp_p + (total_n - successes)
 skep_prob = 1 - beta.cdf(target_eff, skep_a, skep_b)
 evidence_shift = p_target / skep_prob if skep_prob > 0 else 1.0
 
-is_look_point = (total_n >= min_interim) and ((total_n - min_interim) % check_cohort == 0)
+# --- UI LAYOUT ---
+st.title("🛡️ Universal Trial Monitor: Robust Version")
 
-# --- MAIN DASHBOARD ---
-st.title("🐍 Hybrid Antivenom Trial Monitor")
-
-# Header Metrics
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("Sample N", f"{total_n}/{max_n_val}")
+m1.metric("Progress", f"{total_n}/{max_n_val} N")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
 m3.metric(f"P(>{target_eff:.0%})", f"{p_target:.1%}")
 m4.metric("Safety Risk", f"{p_toxic:.1%}")
-m5.metric("PPoS (Final)", f"{bpp:.1%}")
-m6.metric("Prior ESS", f"{prior_alpha + prior_beta:.1f}")
-
-st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}** | Prob Equivalence: **{p_equiv:.1%}**")
+m5.metric("PPoS", f"{bpp:.1%}")
+m6.metric("Prior Weight", f"{prior_alpha + prior_beta:.1f}")
 
 st.markdown("---")
-# Action Logic
+
+# Decision Logic
+is_look_point = (total_n >= min_interim) and ((total_n - min_interim) % check_cohort == 0)
+
 if p_toxic > safe_conf_req:
-    st.error(f"🚨 **CRITICAL SAFETY STOP:** Prob. Toxicity ({p_toxic:.1%}) exceeds limit.")
+    st.error(f"🛑 **ACTION: STOP FOR SAFETY.** Risk of SAEs ({p_toxic:.1%}) exceeds threshold.")
 elif is_look_point:
-    if bpp < bpp_futility_limit: st.warning(f"🛑 **STOP: FUTILITY TRIGGERED:** Forecast ({bpp:.1%}) below limit.")
-    elif p_target > success_conf_req: st.success(f"✅ **EFFICACY MET:** Evidence for >{target_eff:.0%} efficacy achieved.")
-    else: st.info(f"🛡️ **INTERIM CHECK AT N={total_n}:** No stop triggers hit.")
+    if bpp < bpp_futility_limit: st.warning(f"⚠️ **ACTION: STOP FOR FUTILITY.** Forecasted success ({bpp:.1%}) too low.")
+    elif p_target > success_conf_req: st.success(f"✅ **ACTION: STOP FOR SUCCESS.** Efficacy evidence achieved.")
+    else: st.info("🧬 **ACTION: CONTINUE ENROLLMENT.** Data is currently indeterminate.")
 else:
-    next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort) if total_n >= min_interim else min_interim
-    st.info(f"🧬 **MONITORING:** Next scheduled check at N={next_check}.")
+    st.info("⌛ **ACTION: MONITORING.** Trial is between scheduled look points.")
 
-# Graph Row
-st.subheader("Statistical Distributions (95% CI Shaded)")
-x = np.linspace(0, 1, 500)
-fig = go.Figure()
+# Visualizations
+c_left, c_right = st.columns([2, 1])
 
-# Efficacy Plot
-fig.add_trace(go.Scatter(x=x, y=beta.pdf(x, a_eff, b_eff), name="Efficacy Belief", line=dict(color='#2980b9', width=3)))
-x_ci_e = np.linspace(eff_ci[0], eff_ci[1], 100)
-fig.add_trace(go.Scatter(x=np.concatenate([x_ci_e, x_ci_e[::-1]]), y=np.concatenate([beta.pdf(x_ci_e, a_eff, b_eff), np.zeros(100)]),
-                         fill='toself', fillcolor='rgba(41, 128, 185, 0.2)', line=dict(color='rgba(255,255,255,0)'), showlegend=False))
+with c_left:
+    st.subheader("Statistical Distributions")
+    x = np.linspace(0, 1, 500)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=beta.pdf(x, a_eff, b_eff), name="Efficacy", line=dict(color='#2980b9')))
+    fig.add_trace(go.Scatter(x=x, y=beta.pdf(x, a_safe, b_safe), name="Safety (SAE)", line=dict(color='#c0392b')))
+    fig.update_layout(height=400, xaxis_title="Rate", yaxis_title="Density", margin=dict(l=0,r=0,t=20,b=0))
+    st.plotly_chart(fig, use_container_width=True)
 
-# Safety Plot
-fig.add_trace(go.Scatter(x=x, y=beta.pdf(x, a_safe, b_safe), name="Safety Belief", line=dict(color='#c0392b', width=3)))
-x_ci_s = np.linspace(safe_ci[0], safe_ci[1], 100)
-fig.add_trace(go.Scatter(x=np.concatenate([x_ci_s, x_ci_s[::-1]]), y=np.concatenate([beta.pdf(x_ci_s, a_safe, b_safe), np.zeros(100)]),
-                         fill='toself', fillcolor='rgba(192, 57, 43, 0.2)', line=dict(color='rgba(255,255,255,0)'), showlegend=False))
+with c_right:
+    st.subheader("Sensitivity Analysis")
+    p_opt = 1 - beta.cdf(target_eff, opt_p + successes, 1 + (total_n - successes))
+    p_skp = 1 - beta.cdf(target_eff, 1 + successes, skp_p + (total_n - successes))
+    st.write(f"**Optimistic Prior:** {p_opt:.1%}")
+    st.write(f"**Neutral Prior:** {p_target:.1%}")
+    st.write(f"**Skeptical Prior:** {p_skp:.1%}")
+    st.write(f"**Bayes Factor (BF₁₀):** {evidence_shift:.2f}")
 
-fig.add_vline(x=null_eff, line_dash="dot", line_color="gray", annotation_text="Null")
-fig.add_vline(x=target_eff, line_dash="dash", line_color="green", annotation_text="Target")
-fig.add_vline(x=safe_limit, line_dash="dash", line_color="black", annotation_text="Limit")
-
-fig.update_layout(xaxis=dict(range=[0, 1], title="Rate"), height=450, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5), margin=dict(l=0, r=0, t=50, b=0))
-st.plotly_chart(fig, use_container_width=True)
-
-# Risk-Benefit Heatmap Row
-if include_heatmap:
-    st.subheader("⚖️ Risk-Benefit Trade-off Heatmap")
-    grid_res = 50
-    eff_grid = np.linspace(0.2, 0.9, grid_res)
-    saf_grid = np.linspace(0.0, 0.4, grid_res)
-    E, S = np.meshgrid(eff_grid, saf_grid)
-    score = E - (2 * S)
-    fig_heat = px.imshow(score, x=eff_grid, y=saf_grid, labels=dict(x="Efficacy Rate", y="SAE Rate", color="Benefit Score"),
-                         color_continuous_scale="RdYlGn", origin="lower")
-    fig_heat.add_trace(go.Scatter(x=[eff_mean], y=[safe_mean], mode='markers+text', text=["Current"], 
-                                  textposition="top right", marker=dict(color='white', size=12, symbol='x')))
-    fig_heat.update_layout(height=500)
-    st.plotly_chart(fig_heat, use_container_width=True)
-
-# Statistical Breakdown
-with st.expander("📊 Full Statistical Breakdown", expanded=True):
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown("**Efficacy Summary**")
-        st.write(f"Mean Efficacy: **{eff_mean:.1%}**") 
-        st.write(f"95% CI: **[{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]**")
-        st.write(f"Prob > Null ({null_eff:.0%}): {p_null:.1%}")
-        st.write(f"Prob > Target ({target_eff:.0%}): {p_target:.1%}")
-        st.write(f"Projected Success Range: **{ps_range[0]} - {ps_range[1]} successes**")
-    with c2:
-        st.markdown("**Safety Summary**")
-        st.write(f"Mean Toxicity: **{safe_mean:.1%}**") 
-        st.write(f"95% CI: **[{safe_ci[0]:.1%} - {safe_ci[1]:.1%}]**")
-        st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
-        
-        st.markdown("---")
-        if st.button("Calculate Sequential Operating Characteristics"):
-            np.random.seed(42)
-            # Simulating sequential trial to estimate Type I Error inflation
-            null_sims = np.random.binomial(max_n_val, null_eff, 1000)
-            false_positives = sum([ (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (max_n_val - s))) > success_conf_req for s in null_sims])
-            st.warning(f"Est. Sequential Type I Error: **{false_positives/1000:.2%}**")
-            
-    with c3:
-        st.markdown("**Operational Info**")
-        st.write(f"BPP Success Forecast: {bpp:.1%}")
-        st.write(f"Effective Sample Size (ESS): {prior_alpha + prior_beta:.1f}")
-        look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
-        st.write(f"Scheduled Checks: **N = {', '.join(map(str, look_points))}**")
-
-# Sensitivity Analysis
-st.subheader("🧪 Sensitivity Analysis")
-priors_list = [(f"Optimistic ({opt_p}:1)", opt_p, 1), ("Neutral (1:1)", 1, 1), (f"Skeptical (1:{skp_p})", 1, skp_p)]
-cols, target_probs = st.columns(3), []
-for i, (name, ap, bp) in enumerate(priors_list):
-    ae_s, be_s = ap + successes, bp + (total_n - successes)
-    p_n_s = 1 - beta.cdf(null_eff, ae_s, be_s)
-    p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
-    p_g_s = 1 - beta.cdf(dream_eff, ae_s, be_s)
-    target_probs.append(p_t_s)
-    with cols[i]:
-        st.info(f"**{name}**")
-        st.write(f"Prob > Null: {p_n_s:.1%}")
-        st.write(f"Prob > Target: **{p_t_s:.1%}**")
-        st.write(f"Prob > Goal: {p_g_s:.1%}")
-        if "Neutral" in name:
-            st.write(f"Bayes Factor (BF₁₀): **{evidence_shift:.2f}x**")
-
-spread = max(target_probs) - min(target_probs)
-st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'FRAGILE'}** ({spread:.1%} variance between prior mindsets).")
-
-
-
-# Regulatory Decision Table
+# The Decision Table
 with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
-    st.markdown("This table calculates the exact number of successes required at each future look point to trigger a stop.")
+    st.markdown("Calculated success/futility boundaries for all remaining look points:")
+    look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
+    
     boundary_data = []
     for lp in look_points:
         if lp <= total_n: continue
-        # Boundary calculation for success stop
-        s_req = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
-        # Boundary calculation for futility stop (BPP forecast based)
-        f_req = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] > bpp_futility_limit), -1)
-        boundary_data.append({"N": lp, "Success S ≥": s_req, "Futility S ≤": f_req if f_req != -1 else "Stop"})
+        # Boundary for success stop
+        s_stop = next((s for s in range(lp+1) if (1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(lp-s))) > success_conf_req), "N/A")
+        # Boundary for futility stop
+        f_stop = next((s for s in reversed(range(lp+1)) if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] > bpp_futility_limit), -1)
+        boundary_data.append({"N": lp, "Stop for Success if S ≥": s_stop, "Stop for Futility if S ≤": f_stop})
     
     if boundary_data:
         st.table(pd.DataFrame(boundary_data))
     else:
-        st.write("Trial is at final stage; no future look points.")
+        st.write("Final analysis stage reached.")
 
-# Footer/Export
+# Operating Characteristics (Robustness Check)
+with st.expander("🔬 Operating Characteristics & Simulation"):
+    if st.button("Run Simulation (1,000 Iterations)"):
+        null_sims = np.random.binomial(max_n_val, null_eff, 1000)
+        type_1 = sum([(1 - beta.cdf(target_eff, prior_alpha+s, prior_beta+(max_n_val-s))) > success_conf_req for s in null_sims])
+        st.info(f"Estimated Final Type I Error: **{type_1/1000:.3f}** (Target usually < 0.05)")
+
+# Export Results
 st.markdown("---")
-col_f1, col_f2 = st.columns([4, 1])
-with col_f1:
-    st.caption("🚨 **REGULATORY DISCLAIMER:** This dashboard is for clinical decision support. Final regulatory submission requires pre-specified statistical analysis plans (SAP).")
-    st.caption(f"Monitor Version: 3.2.0 | Reference Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-with col_f2:
-    if st.button("📥 Export CSV"):
-        report_data = {"Metric": ["N", "Successes", "SAEs", "BF10"], "Value": [total_n, successes, saes, f"{evidence_shift:.2f}"]}
-        st.download_button("Download", pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'), "Regulatory_Snapshot.csv")
+if st.button("📥 Export Audit-Ready Snapshot"):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    report = pd.DataFrame({
+        "Parameter": ["Total N", "Successes", "SAEs", "PPoS", "Mean Efficacy", "Safety Risk"],
+        "Value": [total_n, successes, saes, f"{bpp:.2%}", f"{eff_mean:.2%}", f"{p_toxic:.2%}"]
+    })
+    st.download_button("Download CSV", report.to_csv(index=False).encode('utf-8'), f"Trial_Audit_{timestamp}.csv")
