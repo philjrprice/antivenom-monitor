@@ -247,8 +247,9 @@ with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
     else: 
         st.write("Trial is at the final analysis point.")
 
-if st.button("📥 Export Audit-Ready Snapshot"):
-    # Capture the thresholds used for this specific decision
+st.markdown("---")
+if st.button("📥 Prepare Audit-Ready Snapshot"):
+    # 1. Capture the data into a dictionary
     report_data = {
         "Metric": [
             "Timestamp", "N", "Successes", "SAEs", 
@@ -261,11 +262,19 @@ if st.button("📥 Export Audit-Ready Snapshot"):
             f"{bpp:.2%}", f"{a_eff+b_eff:.1f}"
         ]
     }
-st.download_button(
-        label="Download CSV",
-        data=pd.DataFrame(report_data).to_csv(index=False).encode('utf-8'),
-        file_name=f"Trial_Audit_{datetime.now().strftime('%Y%m%d')}.csv",
+    
+    # 2. Convert to DataFrame
+    df_report = pd.DataFrame(report_data)
+    
+    # 3. Provide the actual Download Button
+    st.download_button(
+        label="Click here to Download CSV",
+        data=df_report.to_csv(index=False).encode('utf-8'),
+        file_name=f"Trial_Snapshot_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
         mime='text/csv'
     )
+    
+    # 4. Show a preview so the user knows it worked
+    st.table(df_report)
 
 
