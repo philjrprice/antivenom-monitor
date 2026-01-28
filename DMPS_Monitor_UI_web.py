@@ -190,7 +190,7 @@ st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 
 
 # Regulatory Data Export
 st.markdown("---")
-if st.button("📥 Generate Regulatory Snapshot"):
+if st.button("📥 Export Results"):
     report_data = {
         "Metric": ["Timestamp", "N", "Successes", "SAEs", "Post Mean Eff", "Prob > Target", "Safety Risk", "PPoS", "ESS"],
         "Value": [datetime.now().strftime("%Y-%m-%d %H:%M"), total_n, successes, saes, f"{eff_mean:.2%}", f"{p_target:.2%}", f"{p_toxic:.2%}", f"{ppos:.2%}", f"{prior_alpha+prior_beta:.1f}"]
@@ -198,3 +198,4 @@ if st.button("📥 Generate Regulatory Snapshot"):
     df_report = pd.DataFrame(report_data)
     csv = df_report.to_csv(index=False).encode('utf-8')
     st.download_button("Download Snapshot (CSV)", csv, "Trial_Regulatory_Snapshot.csv", "text/csv")
+
