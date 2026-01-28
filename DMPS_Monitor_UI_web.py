@@ -195,7 +195,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"BPP Success Forecast: **{bpp:.1%}**")
         st.write(f"PPoS (Predicted Prob): **{bpp:.1%}**") # NEW (Duplicate)
         st.write(f"ESS (Effective Sample N): **{a_eff + b_eff:.1f}**") # NEW
-            help="Total information content (Current N + Prior Weights)"
+        help="Total information content (Current N + Prior Weights)"
         st.write(f"Look Points: **N = {', '.join(map(str, look_points))}**")
 
 st.subheader("🧪 Sensitivity Analysis & Robustness")
@@ -262,3 +262,4 @@ if st.button("📥 Export Audit-Ready Snapshot"):
             f"{bpp:.2%}", f"{a_eff+b_eff:.1f}"
         ]
     }
+
