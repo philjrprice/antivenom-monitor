@@ -541,6 +541,63 @@ fig_sens_bars.update_yaxes(tickformat=".0%")
 fig_sens_bars.update_layout(height=420, margin=dict(t=20, b=0))
 st.plotly_chart(fig_sens_bars, use_container_width=True)
 
+# =========================
+# SAFETY SENSITIVITY (cards + plots)
+# =========================
+st.subheader("🧯 Safety Sensitivity Analysis")
+
+# Define three safety priors (you can expose sliders if you prefer)
+safety_sens_specs = [
+    ("Optimistic_safety", 0.5, 2.0, "#16a085"),
+    ("Neutral_safety",    1.0, 1.0, "#2c3e50"),
+    ("Skeptical_safety",  2.0, 0.5, "#c0392b"),
+]
+safety_rows = []
+cols = st.columns(3)
+for i, (name, a0, b0, color) in enumerate(safety_sens_specs):
+    a_post = a0 + saes
+    b_post = b0 + (total_n - saes)
+    mean_tox = a_post / (a_post + b_post)
+    ci_lo, ci_hi = beta.ppf([0.025, 0.975], a_post, b_post)
+    p_tox_limit = 1 - beta.cdf(safe_limit, a_post, b_post)
+
+    safety_rows.append({
+        "Prior": name, "color": color,
+        "a": a_post, "b": b_post,
+        "Mean tox": mean_tox,
+        "CI_lo": ci_lo, "CI_hi": ci_hi,
+        "P(tox>limit)": p_tox_limit
+    })
+    with cols[i]:
+        st.info(f"**{name}**")
+        st.write(f"Mean toxicity: **{mean_tox:.1%}**")
+        st.write(f"95% CI: **[{ci_lo:.1%} – {ci_hi:.1%}]**")
+        st.write(f"P(tox > {safe_limit:.0%}): **{p_tox_limit:.1%}**")
+
+# Safety PDF overlay
+x_grid = np.linspace(0, 1, 600)
+fig_safety_pdf = go.Figure()
+for row in safety_rows:
+    fig_safety_pdf.add_trace(go.Scatter(
+        x=x_grid, y=beta.pdf(x_grid, row["a"], row["b"]),
+        name=row["Prior"], line=dict(width=3, color=row["color"])
+    ))
+fig_safety_pdf.add_vline(x=safe_limit, line_dash="dash", line_color="#000000", annotation_text="Safety limit")
+fig_safety_pdf.update_layout(xaxis_title="SAE rate", yaxis_title="Posterior density",
+                             height=380, margin=dict(t=20, b=0))
+st.plotly_chart(fig_safety_pdf, use_container_width=True)
+
+# Grouped bars for P(tox>limit)
+sdf = pd.DataFrame([{"Prior": r["Prior"], "P(tox>limit)": r["P(tox>limit)"]} for r in safety_rows])
+fig_safety_bar = px.bar(sdf, x="Prior", y="P(tox>limit)", color="Prior",
+                        color_discrete_sequence=[r["color"] for r in safety_rows],
+                        text="P(tox>limit)")
+fig_safety_bar.update_traces(texttemplate="%{text:.1%}", textposition="outside", showlegend=False)
+fig_safety_bar.update_yaxes(tickformat=".0%")
+fig_safety_bar.update_layout(height=360, margin=dict(t=20, b=0))
+st.plotly_chart(fig_safety_bar, use_container_width=True)
+
+
 # ==========================================
 # 9. TYPE I ERROR SIMULATION (Monte Carlo) -- Safety & Futility + Guardrails, mixed thresholds
 # ==========================================
@@ -869,3 +926,4 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
     )
     # 4. Show a preview so the user knows it worked
     st.table(df_report)
+
