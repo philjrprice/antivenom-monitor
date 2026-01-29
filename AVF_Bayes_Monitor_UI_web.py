@@ -331,9 +331,29 @@ fig_corr.add_trace(go.Scatter(x=viz_n, y=[np.nan if s is None else s for s in su
 fig_corr.add_trace(go.Scatter(x=viz_n, y=[np.nan if f < 0 else f for f in fut_line],
                               name="Futility Boundary", line=dict(color='red', dash='dash')))
 fig_corr.add_trace(go.Scatter(x=[total_n], y=[successes], mode='markers+text', text=["Current"],
-                              name="Current Data", marker=dict(size=12, color='blue')))
+                              name="Current Efficacy", marker=dict(size=12, color='blue')))
 fig_corr.update_layout(xaxis_title="Sample Size (N)", yaxis_title="Successes (S)", height=400, margin=dict(t=20, b=0))
 st.plotly_chart(fig_corr, use_container_width=True)
+
+# --- NEW: Safety Decision Corridor (mirrors efficacy plot style) ---
+st.subheader("🧯 Safety Decision Corridor")
+fig_safety_corr = go.Figure()
+fig_safety_corr.add_trace(go.Scatter(
+    x=viz_n_safety,
+    y=[np.nan if s is None else s for s in saf_line],
+    name="Safety Stop Boundary (SAEs ≥)",
+    line=dict(color='black', dash='dot')
+))
+fig_safety_corr.add_trace(go.Scatter(
+    x=[total_n], y=[saes],
+    mode='markers+text', text=["Current"],
+    name="Current Safety", marker=dict(size=12, color='black')
+))
+fig_safety_corr.update_layout(
+    xaxis_title="Sample Size (N)", yaxis_title="SAE count (to trigger stop)",
+    height=400, margin=dict(t=20, b=0)
+)
+st.plotly_chart(fig_safety_corr, use_container_width=True)
 
 # ==========================================
 # 7. VISUALIZATIONS & HEATMAP
@@ -426,35 +446,80 @@ def bayes_factor_point_null(s, n, a, b, p0):
     return float(np.exp(log_m1 - log_m0))
 
 priors_list = [
-    (f"Optimistic ({opt_p}:1)", opt_p, 1),
-    ("Neutral (1:1)", 1, 1),
-    (f"Skeptical (1:{skp_p})", 1, skp_p)
+    (f"Optimistic ({opt_p}:1)", opt_p, 1, "#27ae60"),
+    ("Neutral (1:1)", 1, 1, "#34495e"),
+    (f"Skeptical (1:{skp_p})", 1, skp_p, "#8e44ad")
 ]
 cols, target_probs = st.columns(3), []
 
-for i, (name, ap, bp) in enumerate(priors_list):
+# Collect results for plotting
+sens_rows = []
+for i, (name, ap, bp, color) in enumerate(priors_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
     m_eff_s = ae_s / (ae_s + be_s)
     p_n_s = 1 - beta.cdf(null_eff, ae_s, be_s)
     p_t_s = 1 - beta.cdf(target_eff, ae_s, be_s)
     p_g_s = 1 - beta.cdf(dream_eff, ae_s, be_s)
+    bf10 = bayes_factor_point_null(successes, total_n, ap, bp, null_eff)
     target_probs.append(p_t_s)
-
+    sens_rows.append({
+        "Prior": name, "color": color,
+        "a": ae_s, "b": be_s,
+        "Mean": m_eff_s,
+        "P>Null": p_n_s, "P>Target": p_t_s, "P>Goal": p_g_s,
+        "BF10": bf10
+    })
     with cols[i]:
         st.info(f"**{name}**")
         st.write(f"Mean Efficacy: **{m_eff_s:.1%}**")
         st.write(f"Prob > Null: **{p_n_s:.1%}**")
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
         st.write(f"Prob > Goal: **{p_g_s:.1%}**")
-
-        bf10 = bayes_factor_point_null(successes, total_n, ap, bp, null_eff)
         bf_str = f"{bf10:.2e}" if (bf10 >= 1e4 or bf10 <= 1e-4) else f"{bf10:.2f}"
-        st.write(f"Bayes Factor BF₁₀ (H1: Beta({ap},{bp}) vs H0: p={null_eff:.0%}): **{bf_str}**")
+        st.write(f"Bayes Factor BF₁₀ (H1 vs H0 p0): **{bf_str}**")
 
 st.caption("Interpretation: BF₁₀>1 favors H1; >10 is strong evidence. BF₁₀<1/10 is strong evidence for H0.")
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** "
             f"({spread:.1%} variance between prior mindsets).")
+
+# --- NEW: Sensitivity Graphs ---
+st.subheader("🎛️ Sensitivity: Posterior Distributions by Prior")
+x_grid = np.linspace(0, 1, 600)
+fig_sens_pdf = go.Figure()
+for row in sens_rows:
+    fig_sens_pdf.add_trace(go.Scatter(
+        x=x_grid,
+        y=beta.pdf(x_grid, row["a"], row["b"]),
+        name=row["Prior"],
+        line=dict(width=3, color=row["color"])
+    ))
+# Reference lines
+fig_sens_pdf.add_vline(x=null_eff, line_dash="dot", line_color="#7f8c8d", annotation_text="Null (p0)")
+fig_sens_pdf.add_vline(x=target_eff, line_dash="dash", line_color="#2ecc71", annotation_text="Target")
+fig_sens_pdf.add_vline(x=dream_eff, line_dash="dash", line_color="#f39c12", annotation_text="Goal")
+fig_sens_pdf.update_layout(
+    xaxis_title="Efficacy rate", yaxis_title="Posterior density",
+    height=420, margin=dict(t=20, b=0)
+)
+st.plotly_chart(fig_sens_pdf, use_container_width=True)
+
+st.subheader("🎛️ Sensitivity: Key Probabilities by Prior")
+# Long-format dataframe for grouped bars
+prob_df = pd.DataFrame([{
+    "Prior": r["Prior"], "P>Null": r["P>Null"], "P>Target": r["P>Target"], "P>Goal": r["P>Goal"]
+} for r in sens_rows])
+prob_df_long = prob_df.melt(id_vars="Prior", var_name="Metric", value_name="Probability")
+
+fig_sens_bars = px.bar(
+    prob_df_long, x="Prior", y="Probability", color="Metric",
+    barmode="group", text="Probability",
+    color_discrete_map={"P>Null": "#1abc9c", "P>Target": "#2980b9", "P>Goal": "#e67e22"}
+)
+fig_sens_bars.update_traces(texttemplate="%{text:.1%}", textposition="outside")
+fig_sens_bars.update_yaxes(tickformat=".0%")
+fig_sens_bars.update_layout(height=420, margin=dict(t=20, b=0))
+st.plotly_chart(fig_sens_bars, use_container_width=True)
 
 # ==========================================
 # 9. TYPE I ERROR SIMULATION (Monte Carlo) -- Safety & Futility + Guardrails, mixed thresholds
@@ -508,7 +573,7 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
                         # Use interim threshold unless this is the final look
                         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
                         suc_thr = succ_req_by_n.get(lp, None)
-                        # Note: succ_req_by_n was computed using the correct threshold per look
+                        # Note: succ_req_by_n already uses the correct threshold per look
                         if suc_thr is not None and s >= suc_thr:
                             fp_count += 1  # efficacy success under H0 => false positive
                             declared = True
