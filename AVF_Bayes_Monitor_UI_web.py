@@ -234,15 +234,12 @@ def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf_final, p_a, p_b, d
         ci_low = max(0.0, ppos - 1.96 * se)
         ci_high = min(1.0, ppos + 1.96 * se)
         return ppos, [curr_s, curr_s], se, ci_low, ci_high
-
     future_rates = rng.beta(p_a + curr_s, p_b + curr_n - curr_s, draws)
     future_successes = rng.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
-
     final_confs = 1 - beta.cdf(t_eff, p_a + total_proj_s, p_b + (m_n - total_proj_s))
     ppos = float(np.mean(final_confs > s_conf_final))
     s_range = [int(np.percentile(total_proj_s, 5)), int(np.percentile(total_proj_s, 95))]
-
     se = float(np.sqrt(ppos * (1 - ppos) / max(1, draws)))
     ci_low = max(0.0, ppos - 1.96 * se)
     ci_high = min(1.0, ppos + 1.96 * se)
@@ -276,6 +273,22 @@ def futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_final, prior_
     idx = np.where(ppos_monotone <= futility_floor)[0]
     return int(idx[-1]) if idx.size > 0 else -1
 
+# NEW: Wilson score interval for Monte Carlo proportions (robust near 0 and 1)
+def wilson_ci(k, n, alpha=0.05):
+    """
+    Wilson score interval for a binomial proportion k/n (two-sided 95% by default).
+    Returns (lower, upper).
+    """
+    if n == 0:
+        return (0.0, 1.0)
+    from math import sqrt
+    z = 1.959963984540054  # 97.5% quantile for a two-sided 95% CI
+    p = k / n
+    denom = 1.0 + (z*z)/n
+    center = (p + (z*z)/(2*n)) / denom
+    halfwidth = (z * sqrt((p*(1-p)/n) + ((z*z)/(4*n*n)))) / denom
+    return (max(0.0, center - halfwidth), min(1.0, center + halfwidth))
+
 # Run the forecast for the current state (use FINAL threshold)
 bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
     successes, total_n, max_n_val, target_eff, success_conf_req_final, prior_alpha, prior_beta, mc_draws, mc_seed
@@ -285,7 +298,6 @@ bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
 # 4. MAIN DASHBOARD LAYOUT
 # ==========================================
 st.title("🛡️ AVF-Single Arm Bayesian Trial Monitor")
-
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
@@ -294,8 +306,8 @@ m4.metric("Safety Risk", f"{p_toxic:.1%}")
 m5.metric("PPoS (Final)", f"{bpp:.1%}", help=f"95% CI [{bpp_ci_low:.1%}, {bpp_ci_high:.1%}]")
 m6.metric("Prior ESS (Eff.)", f"{prior_alpha + prior_beta:.1f}")
 st.caption(
-    f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**  |  Prob Equivalence: **{p_equiv:.1%}** "
-    f"(band applied: [{lb:.0%}, {ub:.0%}])"
+    f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**  \n"
+    f"Prob Equivalence: **{p_equiv:.1%}** (band applied: [{lb:.0%}, {ub:.0%}])"
 )
 
 st.markdown("---")
@@ -328,17 +340,46 @@ else:
     next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
     next_safety = total_n + (safety_check_cohort - (total_n - safety_min_interim) % safety_check_cohort)
     st.info(f"🧬 **STATUS: MONITORING.** Next efficacy check at N={next_check}; next safety check at N={next_safety}.")
+    # --- Next-look concrete thresholds (for reviewer clarity) ---
+    try:
+        succ_req_next = success_boundary(
+            next_check, prior_alpha, prior_beta, target_eff,
+            success_conf_req_final if (next_check == max_n_val) else success_conf_req_interim
+        )
+        futi_req_next = futility_boundary_ppos(
+            next_check, max_n_val, target_eff, success_conf_req_final,
+            prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit
+        )
+        succ_txt = (f"Success Stop if S ≥ {succ_req_next}" if succ_req_next is not None else "No success stop at that look")
+        futi_txt = (f"Futility Stop if S ≤ {futi_req_next}" if futi_req_next >= 0 else "No futility stop at that look")
+        st.caption(f"**Next efficacy look (N={next_check}):** {succ_txt}; {futi_txt}.")
+    except Exception:
+        pass
+    # --- Predictive Pr[safety stop at next safety look] ---
+    try:
+        if len([safety_min_interim + (i * safety_check_cohort)
+               for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]) > 0 and next_safety > total_n:
+            saf_thr_next = safety_stop_threshold(next_safety, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
+            if saf_thr_next is not None:
+                rem_to_next = next_safety - total_n
+                draws_pred = min(5000, mc_draws)
+                rng_pred = np.random.default_rng(mc_seed + 101)
+                p_saf_draws = rng_pred.beta(a_saf, b_saf, draws_pred)
+                new_saes = rng_pred.binomial(rem_to_next, p_saf_draws)
+                pr_stop_next = float(np.mean((saes + new_saes) >= saf_thr_next))
+                st.caption(f"**Predictive Pr[safety stop at next safety look (N={next_safety})]: {pr_stop_next:.1%}** "
+                           f"(threshold: SAEs ≥ {saf_thr_next})")
+    except Exception:
+        pass
 
 # ==========================================
 # 6. SEQUENTIAL DECISION CORRIDORS
 # ==========================================
 st.subheader("📈 Trial Decision Corridors")
-
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
-
 safety_look_points = [safety_min_interim + (i * safety_check_cohort)
-                      for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]
+ for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]
 viz_n_safety = np.array(safety_look_points)
 
 succ_line, fut_line = [], []
@@ -440,6 +481,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.markdown("**Efficacy Summary**")
         st.write(f"Mean Efficacy: **{eff_mean:.1%}**")
         st.write(f"95% CI: **[{eff_ci[0]:.1%} - {eff_ci[1]:.1%}]**")
+        st.write(f"95% CI width (precision): **{(eff_ci[1]-eff_ci[0]):.1%}**")
         st.write(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
         st.write(f"Prob > Target ({target_eff:.0%}): **{p_target:.1%}**")
         st.write(f"Prob > Goal ({dream_eff:.0%}): **{p_goal:.1%}**")
@@ -449,6 +491,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.markdown("**Safety Summary (Binary SAE)**")
         st.write(f"Mean Toxicity: **{saf_mean:.1%}**")
         st.write(f"95% CI: **[{saf_ci[0]:.1%} - {saf_ci[1]:.1%}]**")
+        st.write(f"95% CI width (precision): **{(saf_ci[1]-saf_ci[0]):.1%}**")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
         st.caption("Safety is modeled as binary per patient: ≥1 SAE ⇒ SAE=1.")
     with c3:
@@ -475,7 +518,6 @@ eff_sens_list = [
     (f"Efficacy S3 (α={eff3_a:.1f}, β={eff3_b:.1f})", eff3_a, eff3_b, "#8e44ad"),
 ]
 cols, target_probs = st.columns(3), []
-
 sens_rows = []
 for i, (name, ap, bp, color) in enumerate(eff_sens_list):
     ae_s, be_s = ap + successes, bp + (total_n - successes)
@@ -540,7 +582,6 @@ st.plotly_chart(fig_sens_bars, use_container_width=True)
 # 8B. SAFETY SENSITIVITY (adjustable priors + richer stats + UCL badge)
 # ==========================================
 st.subheader("🧯 Safety Sensitivity Analysis (Adjustable Priors)")
-
 safety_sens_specs = [
     (f"Safety S1 (α={saf1_a:.1f}, β={saf1_b:.1f})", saf1_a, saf1_b, "#16a085"),
     (f"Safety S2 (α={saf2_a:.1f}, β={saf2_b:.1f})", saf2_a, saf2_b, "#2c3e50"),
@@ -621,6 +662,10 @@ if safety_rows:
             f"Across safety priors, **P(tox > {safe_limit:.0%}) ranges {min_p:.1%}–{max_p:.1%}**, "
             f"straddling your Safety Stop Confidence (**{safe_conf_req:.0%}**)."
         )
+    saf_spread = max_p - min_p
+    st.caption(f"**Interpretation (safety):** Results are "
+               f"**{'ROBUST' if saf_spread < 0.15 else 'SENSITIVE'}** "
+               f"({saf_spread:.1%} variance in P(tox>limit) across safety priors).")
 
 # ==========================================
 # 9. TYPE I ERROR SIMULATION (Monte Carlo) -- separate toggles
@@ -655,28 +700,22 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
     else:
         with st.spinner(f"Simulating {num_sims:,} trials..."):
             rng = np.random.default_rng(sim_seed)
-
             # Build efficacy look set
             eff_looks = set(look_points) if typei_use_eff_looks else set(range(1, max_n_val + 1))
             eff_looks.add(max_n_val)  # always include final for efficacy decisions
-
             # Build safety look set
             saf_looks = set(safety_look_points) if typei_use_saf_looks else set(range(1, max_n_val + 1))
-
             # Union for evaluation timeline
             all_looks = sorted(eff_looks.union(saf_looks))
-
             # Safety check locus
             if typei_use_saf_looks:
                 safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
             else:
                 safety_check_set = set(range(1, max_n_val + 1))  # continuous safety everywhere
-
             # Precompute any missing thresholds for expanded looks
             succ_req_sim = dict(succ_req_by_n)
             futi_max_sim = dict(futi_max_by_n)
             safety_req_sim = dict(safety_req_by_n)
-
             for lp in eff_looks:
                 use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
                 if lp not in succ_req_sim:
@@ -684,27 +723,22 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
                 if lp != max_n_val and (lp not in futi_max_sim):
                     futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
                                                              prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
-
             for lp in saf_looks:
                 if lp not in safety_req_sim:
                     safety_req_sim[lp] = safety_stop_threshold(lp, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
-
             # Run sims
             fp_count = 0
             for _ in range(num_sims):
                 trial_eff = rng.binomial(1, null_eff, max_n_val)
                 trial_saf = rng.binomial(1, sim_safety_rate, max_n_val)
-
                 for lp in all_looks:
                     s = int(trial_eff[:lp].sum())
                     t = int(trial_saf[:lp].sum())
-
                     # Safety stop?
                     if lp in safety_check_set:
                         saf_thr = safety_req_sim.get(lp, None)
                         if saf_thr is not None and t >= saf_thr:
                             break  # safety stop (not FP)
-
                     # Efficacy/futility?
                     if lp in eff_looks:
                         if lp != max_n_val:
@@ -715,9 +749,12 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
                         if suc_thr is not None and s >= suc_thr:
                             fp_count += 1  # FP: efficacy success under H0
                             break
-
             type_i_estimate = fp_count / num_sims
-            st.warning(f"Estimated Sequential Type I Error (with safety & futility): **{type_i_estimate:.2%}**")
+            ci_lo, ci_hi = wilson_ci(fp_count, num_sims)
+            st.warning(
+                f"Estimated Sequential Type I Error (with safety & futility): "
+                f"**{type_i_estimate:.2%}** (95% CI {ci_lo:.2%}–{ci_hi:.2%})"
+            )
             st.caption("Alpha respects the toggles: using user look schedules or continuous checks at every N.")
 
 # ==========================================
@@ -737,28 +774,22 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
                         mc_draws, mc_seed, bpp_futility_limit,
                         power_use_eff_looks, power_use_saf_looks):
     rng = np.random.default_rng(seed)
-
     # Efficacy look set
     eff_looks = set(look_points) if power_use_eff_looks else set(range(1, max_n_val + 1))
     eff_looks.add(max_n_val)  # ensure final
-
     # Safety look set
     saf_looks = set(safety_look_points) if power_use_saf_looks else set(range(1, max_n_val + 1))
-
     # Union timeline
     all_looks = sorted(eff_looks.union(saf_looks))
-
     # Safety check locus
     if power_use_saf_looks:
         safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
     else:
         safety_check_set = set(range(1, max_n_val + 1))  # continuous safety
-
     # Precompute thresholds
     succ_req_sim = dict(succ_req_by_n)
     futi_max_sim = dict(futi_max_by_n)
     safety_req_sim = dict(safety_req_by_n)
-
     for lp in eff_looks:
         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
         if lp not in succ_req_sim:
@@ -766,24 +797,19 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
         if lp != max_n_val and (lp not in futi_max_sim):
             futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
                                                       prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
-
     for lp in saf_looks:
         if lp not in safety_req_sim:
             safety_req_sim[lp] = safety_stop_threshold(lp, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
-
     success_count = 0
     stop_n_list = []
     stop_reason_counts = {"safety": 0, "futility": 0, "interim_success": 0, "final_success": 0, "no_decision": 0}
-
     for _ in range(sims):
         trial_eff = rng.binomial(1, p_true_eff, max_n_val)
         trial_saf = rng.binomial(1, p_true_saf, max_n_val)
-
         decided = False
         for lp in all_looks:
             s = int(trial_eff[:lp].sum())
             t = int(trial_saf[:lp].sum())
-
             # Safety
             if lp in safety_check_set:
                 saf_thr = safety_req_sim.get(lp, None)
@@ -792,7 +818,6 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
                     stop_n_list.append(lp)
                     decided = True
                     break
-
             # Efficacy/futility
             if lp in eff_looks:
                 if lp != max_n_val:
@@ -802,7 +827,6 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
                         stop_n_list.append(lp)
                         decided = True
                         break
-
                 suc_thr = succ_req_sim.get(lp, None)
                 if suc_thr is not None and s >= suc_thr:
                     success_count += 1
@@ -810,11 +834,9 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
                     stop_n_list.append(lp)
                     decided = True
                     break
-
         if not decided:
             stop_reason_counts["no_decision"] += 1
             stop_n_list.append(max_n_val)
-
     power_est = success_count / sims
     exp_n = float(np.mean(stop_n_list)) if stop_n_list else float(max_n_val)
     return power_est, exp_n, stop_reason_counts
@@ -832,9 +854,12 @@ power_est, power_exp_n, power_reasons = simulate_power_once(
     power_use_eff_looks, power_use_saf_looks
 )
 
+c_pow_lo, c_pow_hi = wilson_ci(power_reasons['interim_success'] + power_reasons['final_success'], power_sims)
+
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.metric("Power (Pr[declare success])", f"{power_est:.1%}")
+    st.metric("Power (Pr[declare success])", f"{power_est:.1%}",
+              help=f"Monte Carlo 95% CI {c_pow_lo:.1%}–{c_pow_hi:.1%}")
 with c2:
     st.metric("Expected sample size at stop", f"{power_exp_n:.1f}")
 with c3:
@@ -980,4 +1005,3 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
-
