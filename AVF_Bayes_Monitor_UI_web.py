@@ -362,7 +362,7 @@ for lp in viz_n_safety:
     saf_line.append(saf_req)
 
 #_saf + (lp - s))) > safe_conf_req),
-                   None)
+                 None)
     saf_line.append(saf_req)
 
 # For quick lookup during simulations
@@ -1114,3 +1114,4 @@ if st.buttontton("📥 Prepare Audit-Ready Snapshot"):
     )
   )
     st.table(df_report)
+
