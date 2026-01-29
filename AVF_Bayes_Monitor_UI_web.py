@@ -149,6 +149,31 @@ with st.sidebar.expander("Forecasting Controls (PPoS)", expanded=True):
         help="Controls reproducibility of PPoS simulations."
     )
 
+# --- NEW: Power analysis settings
+with st.sidebar.expander("Power Analysis Settings", expanded=False):
+    power_true_eff = st.slider(
+        "Assumed TRUE efficacy rate for power", 0.05, 0.95, float(target_eff), step=0.01,
+        help="Used to simulate trials when estimating power (probability of declaring success)."
+    )
+    power_true_saf = st.slider(
+        "Assumed TRUE SAE rate for power", 0.0, 0.9, float(safe_limit), step=0.01,
+        help="Used to simulate SAEs during power estimation."
+    )
+    power_sims = st.number_input(
+        "Number of simulations (power point)", 1000, 100000, 10000, step=1000,
+        help="Trials simulated at the chosen true rates to estimate power and expected sample size."
+    )
+    power_seed = st.number_input("Random seed (power)", 0, 10_000_000, 17, step=1)
+    st.markdown("**Power curve options**")
+    power_curve_points = st.slider(
+        "Power curve: points across efficacy range", 5, 30, 12, step=1,
+        help="Number of grid points (e.g., from p0 to 0.9) for the power curve."
+    )
+    power_curve_sims = st.number_input(
+        "Simulations per curve point", 500, 50000, 5000, step=500,
+        help="Trials simulated at each efficacy grid value to draw the power curve."
+    )
+
 # ==========================================
 # 2. MATH ENGINE (Bayesian Updates)
 # ==========================================
@@ -293,20 +318,19 @@ def futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_final, prior_
     idx = np.where(ppos_monotone <= futility_floor)[0]
     return int(idx[-1]) if idx.size > 0 else -1
 
+# Helper: success boundary (minimal S meeting required confidence)
+@st.cache_data
+def success_boundary(lp, prior_alpha, prior_beta, target_eff, conf_req):
+    return next((s for s in range(lp + 1)
+                 if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > conf_req),
+                None)
+
 succ_line, fut_line = [], []
 for lp in viz_n:
-    # Pick the correct success threshold at this look
     use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
-
-    # Success boundary: smallest S where posterior P(>target) > requirement
-    s_req = next((s for s in range(lp + 1)
-                  if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > use_conf),
-                 None)
-
-    # Futility boundary: highest S where PPoS is still BELOW the limit (monotone-safe)
+    s_req = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
     f_req = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
                                    prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
-
     succ_line.append(s_req)  # may be None (no success at this look)
     fut_line.append(max(0, f_req) if f_req >= 0 else -1)
 
@@ -325,7 +349,6 @@ safety_req_by_n = {int(n): (None if s is None else int(s)) for n, s in zip(viz_n
 
 # Plot efficacy success/futility corridors
 fig_corr = go.Figure()
-# Success boundary: draw with gaps where None
 fig_corr.add_trace(go.Scatter(x=viz_n, y=[np.nan if s is None else s for s in succ_line],
                               name="Success Boundary", line=dict(color='green', dash='dash')))
 fig_corr.add_trace(go.Scatter(x=viz_n, y=[np.nan if f < 0 else f for f in fut_line],
@@ -335,7 +358,7 @@ fig_corr.add_trace(go.Scatter(x=[total_n], y=[successes], mode='markers+text', t
 fig_corr.update_layout(xaxis_title="Sample Size (N)", yaxis_title="Successes (S)", height=400, margin=dict(t=20, b=0))
 st.plotly_chart(fig_corr, use_container_width=True)
 
-# --- NEW: Safety Decision Corridor (mirrors efficacy plot style) ---
+# --- Safety Decision Corridor ---
 st.subheader("🧯 Safety Decision Corridor")
 fig_safety_corr = go.Figure()
 fig_safety_corr.add_trace(go.Scatter(
@@ -483,7 +506,6 @@ spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** "
             f"({spread:.1%} variance between prior mindsets).")
 
-# --- NEW: Sensitivity Graphs ---
 st.subheader("🎛️ Sensitivity: Posterior Distributions by Prior")
 x_grid = np.linspace(0, 1, 600)
 fig_sens_pdf = go.Figure()
@@ -505,12 +527,10 @@ fig_sens_pdf.update_layout(
 st.plotly_chart(fig_sens_pdf, use_container_width=True)
 
 st.subheader("🎛️ Sensitivity: Key Probabilities by Prior")
-# Long-format dataframe for grouped bars
 prob_df = pd.DataFrame([{
     "Prior": r["Prior"], "P>Null": r["P>Null"], "P>Target": r["P>Target"], "P>Goal": r["P>Goal"]
 } for r in sens_rows])
 prob_df_long = prob_df.melt(id_vars="Prior", var_name="Metric", value_name="Probability")
-
 fig_sens_bars = px.bar(
     prob_df_long, x="Prior", y="Probability", color="Metric",
     barmode="group", text="Probability",
@@ -545,6 +565,8 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
             fp_count = 0  # False positives for efficacy
             eff_looks = set(look_points)
             saf_looks = set(safety_look_points)
+            # Always include the final look for efficacy
+            eff_looks.add(max_n_val)
             all_looks = sorted(eff_looks.union(saf_looks))
 
             for _ in range(num_sims):
@@ -565,15 +587,19 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
 
                     # Efficacy/Futility (if an efficacy look)
                     if lp in eff_looks:
-                        fut_thr = futi_max_by_n.get(lp, -1)
-                        if fut_thr >= 0 and s <= fut_thr:
-                            declared = True  # futility stop (not FP)
-                            break
+                        # Futility only meaningful before final
+                        if lp != max_n_val:
+                            fut_thr = futi_max_by_n.get(lp, -1)
+                            if fut_thr >= 0 and s <= fut_thr:
+                                declared = True  # futility stop (not FP)
+                                break
 
-                        # Use interim threshold unless this is the final look
+                        # Success threshold per look
                         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
                         suc_thr = succ_req_by_n.get(lp, None)
-                        # Note: succ_req_by_n already uses the correct threshold per look
+                        if suc_thr is None and lp == max_n_val:
+                            # compute final success boundary on the fly
+                            suc_thr = success_boundary(lp, prior_alpha, prior_beta, target_eff, success_conf_req_final)
                         if suc_thr is not None and s >= suc_thr:
                             fp_count += 1  # efficacy success under H0 => false positive
                             declared = True
@@ -584,7 +610,176 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
             st.caption("Alpha is computed across scheduled looks. Final success uses the FINAL threshold; interim uses the INTERIM threshold.")
 
 # ==========================================
-# 10. REGULATORY TABLES (efficacy/futility) & (safety)
+# 10. NEW — POWER ANALYSIS (Operating Characteristics)
+# ==========================================
+st.markdown("---")
+st.subheader("📐 Power Analysis (Operating Characteristics)")
+
+@st.cache_data
+def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
+                        max_n_val,
+                        eff_looks, saf_looks, safety_gate_to_schedule,
+                        prior_alpha, prior_beta, target_eff,
+                        success_conf_req_interim, success_conf_req_final,
+                        prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
+                        succ_req_by_n, futi_max_by_n, safety_req_by_n):
+    """
+    Simulate full trials to estimate:
+      - Power (probability of declaring efficacy success)
+      - Expected sample size at stop
+      - Stop reason proportions
+    Applies rules: safety -> futility -> efficacy, with separate safety schedule and
+    interim vs final thresholds.
+    Ensures final efficacy look at N = max_n_val is included.
+    """
+    rng = np.random.default_rng(seed)
+    eff_looks = set(eff_looks)
+    saf_looks = set(saf_looks)
+    eff_looks.add(max_n_val)  # always include final look
+
+    all_looks = sorted(eff_looks.union(saf_looks))
+    success_count = 0
+    stop_n_list = []
+    stop_reason_counts = {"safety": 0, "futility": 0, "interim_success": 0, "final_success": 0, "no_decision": 0}
+
+    for _ in range(sims):
+        trial_eff = rng.binomial(1, p_true_eff, max_n_val)
+        trial_saf = rng.binomial(1, p_true_saf, max_n_val)
+
+        decided = False
+        for lp in all_looks:
+            s = int(trial_eff[:lp].sum())
+            t = int(trial_saf[:lp].sum())
+
+            # Safety rule: gated or continuous
+            apply_safety = (lp in saf_looks) if safety_gate_to_schedule else True
+            if apply_safety:
+                # Safety threshold (from pre-computed schedule only)
+                saf_thr = safety_req_by_n.get(lp, None)
+                if saf_thr is not None and t >= saf_thr:
+                    stop_reason_counts["safety"] += 1
+                    stop_n_list.append(lp)
+                    decided = True
+                    break
+
+            # Efficacy/Futility rules only at efficacy looks
+            if lp in eff_looks:
+                # Futility (only before final)
+                if lp != max_n_val:
+                    fut_thr = futi_max_by_n.get(lp, -1)
+                    if fut_thr >= 0 and s <= fut_thr:
+                        stop_reason_counts["futility"] += 1
+                        stop_n_list.append(lp)
+                        decided = True
+                        break
+
+                # Success boundary (interim vs final)
+                use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
+                suc_thr = succ_req_by_n.get(lp, None)
+                if suc_thr is None:
+                    # compute boundary on the fly (typically at final if not in schedule)
+                    suc_thr = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+
+                if suc_thr is not None and s >= suc_thr:
+                    success_count += 1
+                    if lp == max_n_val:
+                        stop_reason_counts["final_success"] += 1
+                    else:
+                        stop_reason_counts["interim_success"] += 1
+                    stop_n_list.append(lp)
+                    decided = True
+                    break
+
+        if not decided:
+            stop_reason_counts["no_decision"] += 1
+            stop_n_list.append(max_n_val)  # reached max N without meeting any rule
+
+    power_est = success_count / sims
+    exp_n = float(np.mean(stop_n_list)) if stop_n_list else float(max_n_val)
+    return power_est, exp_n, stop_reason_counts
+
+# Run power simulation at the chosen true rates
+power_est, power_exp_n, power_reasons = simulate_power_once(
+    power_true_eff, power_true_saf, power_sims, power_seed,
+    max_n_val,
+    look_points, safety_look_points, safety_gate_to_schedule,
+    prior_alpha, prior_beta, target_eff,
+    success_conf_req_interim, success_conf_req_final,
+    prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
+    succ_req_by_n, futi_max_by_n, safety_req_by_n
+)
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.metric("Power (Pr[declare success])", f"{power_est:.1%}")
+with c2:
+    st.metric("Expected sample size at stop", f"{power_exp_n:.1f}")
+with c3:
+    st.write("Stop reasons:")
+    st.write(f"- Safety stop: **{power_reasons['safety'] / power_sims:.1%}**")
+    st.write(f"- Futility stop: **{power_reasons['futility'] / power_sims:.1%}**")
+    st.write(f"- Interim success: **{power_reasons['interim_success'] / power_sims:.1%}**")
+    st.write(f"- Final success: **{power_reasons['final_success'] / power_sims:.1%}**")
+    st.write(f"- No decision at looks (ended at max N): **{power_reasons['no_decision'] / power_sims:.1%}**")
+
+# --- Power curve vs true efficacy ---
+st.subheader("📐 Power Curve vs True Efficacy")
+@st.cache_data
+def power_curve(p0, p_high, points, sims_per_point, seed_base,
+                max_n_val, look_points, safety_look_points, safety_gate_to_schedule,
+                prior_alpha, prior_beta, target_eff,
+                success_conf_req_interim, success_conf_req_final,
+                prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
+                succ_req_by_n, futi_max_by_n, safety_req_by_n,
+                true_saf_rate):
+    grid = np.linspace(p0, p_high, points)
+    rng = np.random.default_rng(seed_base)
+    curve = []
+    for i, p_eff in enumerate(grid):
+        seed = int(seed_base + i * 9973)
+        pw, expN, _ = simulate_power_once(
+            p_eff, true_saf_rate, sims_per_point, seed,
+            max_n_val, look_points, safety_look_points, safety_gate_to_schedule,
+            prior_alpha, prior_beta, target_eff,
+            success_conf_req_interim, success_conf_req_final,
+            prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
+            succ_req_by_n, futi_max_by_n, safety_req_by_n
+        )
+        curve.append({"True efficacy": p_eff, "Power": pw, "Expected N": expN})
+    return pd.DataFrame(curve)
+
+power_df = power_curve(
+    null_eff, 0.90, power_curve_points, power_curve_sims, power_seed,
+    max_n_val, look_points, safety_look_points, safety_gate_to_schedule,
+    prior_alpha, prior_beta, target_eff,
+    success_conf_req_interim, success_conf_req_final,
+    prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
+    succ_req_by_n, futi_max_by_n, safety_req_by_n,
+    power_true_saf
+)
+
+fig_power = go.Figure()
+fig_power.add_trace(go.Scatter(
+    x=power_df["True efficacy"], y=power_df["Power"],
+    name="Power", mode="lines+markers", line=dict(color="#2c3e50", width=3)
+))
+fig_power.add_vline(x=null_eff, line_dash="dot", line_color="#7f8c8d", annotation_text="Null (p0)")
+fig_power.add_vline(x=target_eff, line_dash="dash", line_color="#2ecc71", annotation_text="Target (p1)")
+fig_power.update_layout(xaxis_title="True efficacy rate", yaxis_title="Power",
+                        yaxis=dict(range=[0,1]), height=420, margin=dict(t=20, b=0))
+st.plotly_chart(fig_power, use_container_width=True)
+
+fig_expN = go.Figure()
+fig_expN.add_trace(go.Scatter(
+    x=power_df["True efficacy"], y=power_df["Expected N"],
+    name="Expected N at stop", mode="lines+markers", line=dict(color="#8e44ad", width=3)
+))
+fig_expN.update_layout(xaxis_title="True efficacy rate", yaxis_title="Expected sample size at stop",
+                       height=380, margin=dict(t=20, b=0))
+st.plotly_chart(fig_expN, use_container_width=True)
+
+# ==========================================
+# 11. REGULATORY TABLES (efficacy/futility) & (safety)
 # ==========================================
 with st.expander("📋 Regulatory Decision Boundary Tables", expanded=True):
     st.markdown("**Efficacy/Futility Boundaries (by efficacy look schedule)**")
@@ -596,9 +791,7 @@ with st.expander("📋 Regulatory Decision Boundary Tables", expanded=True):
         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
 
         # Success threshold
-        s_req = next((s for s in range(lp + 1)
-                      if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > use_conf),
-                     None)
+        s_req = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
 
         # Futility threshold (highest S that triggers a stop)
         f_req = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
@@ -639,7 +832,7 @@ with st.expander("📋 Regulatory Decision Boundary Tables", expanded=True):
 st.markdown("---")
 
 # ==========================================
-# 11. EXPORT / AUDIT SNAPSHOT
+# 12. EXPORT / AUDIT SNAPSHOT
 # ==========================================
 if st.button("📥 Prepare Audit-Ready Snapshot"):
     # 1. Capture the data into a dictionary
@@ -650,7 +843,8 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
             "Futility Threshold (PPoS floor)", "PPoS", "PPoS SE", "PPoS 95% CI",
             "Prior ESS (eff)", "Prior ESS (saf)",
             "Posterior pseudo-count (eff)", "Posterior pseudo-count (saf)",
-            "Efficacy Looks", "Safety Looks", "Safety gated to schedule?"
+            "Efficacy Looks", "Safety Looks", "Safety gated to schedule?",
+            "Power (at chosen true rates)", "Power Expected N"
         ],
         "Value": [
             datetime.now().isoformat(), total_n, successes, saes,
@@ -660,7 +854,8 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
             f"{a_eff+b_eff:.1f}", f"{a_saf+b_saf:.1f}",
             ", ".join(map(str, look_points)) or "None",
             ", ".join(map(str, safety_look_points)) or "None",
-            "Yes" if safety_gate_to_schedule else "No"
+            "Yes" if safety_gate_to_schedule else "No",
+            f"{power_est:.2%}", f"{power_exp_n:.1f}"
         ]
     }
     # 2. Convert to DataFrame
