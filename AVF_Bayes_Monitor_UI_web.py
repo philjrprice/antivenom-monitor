@@ -127,12 +127,6 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     )
 
 # Sensitivity & Equivalence
-with st.sidebar.expander("Sensitivity Prior Settings (Legacy weights)"):
-    opt_p = st.slider("Optimistic Prior Weight (efficacy α)", 1, 10, 4,
-                      help="Legacy alpha weight for the Optimistic efficacy sensitivity.")
-    skp_p = st.slider("Skeptical Prior Weight (efficacy β)", 1, 10, 4,
-                      help="Legacy beta weight for the Skeptical efficacy sensitivity.")
-
 with st.sidebar.expander("Sensitivity Priors (Adjustable) — Efficacy", expanded=True):
     st.caption("Define three efficacy priors (α, β) for sensitivity overlays.")
     eff1_a = st.number_input("Efficacy S1 α", 0.1, 20.0, float(opt_p), 0.1)
@@ -968,3 +962,4 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
+
