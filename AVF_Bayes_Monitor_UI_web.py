@@ -500,3 +500,112 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
 
                     # Efficacy/Futility (if an efficacy look)
                     if lp in eff_looks:
+                        fut_thr = futi_max_by_n.get(lp, -1)
+                        if fut_thr >= 0 and s <= fut_thr:
+                            declared = True  # futility stop (not FP)
+                            break
+
+                        # Use interim threshold unless this is the final look
+                        use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
+                        suc_thr = succ_req_by_n.get(lp, None)
+                        # Note: succ_req_by_n was computed using the correct threshold per look
+                        if suc_thr is not None and s >= suc_thr:
+                            fp_count += 1  # efficacy success under H0 => false positive
+                            declared = True
+                            break
+
+            type_i_estimate = fp_count / num_sims
+            st.warning(f"Estimated Sequential Type I Error (with safety & futility): **{type_i_estimate:.2%}**")
+            st.caption("Alpha is computed across scheduled looks. Final success uses the FINAL threshold; interim uses the INTERIM threshold.")
+
+# ==========================================
+# 10. REGULATORY TABLES (efficacy/futility) & (safety)
+# ==========================================
+with st.expander("📋 Regulatory Decision Boundary Tables", expanded=True):
+    st.markdown("**Efficacy/Futility Boundaries (by efficacy look schedule)**")
+    boundary_data_eff = []
+    for lp in look_points:
+        if lp <= total_n:
+            continue
+
+        use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
+
+        # Success threshold
+        s_req = next((s for s in range(lp + 1)
+                      if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > use_conf),
+                     None)
+
+        # Futility threshold (highest S that triggers a stop)
+        f_req = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+                                       prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
+
+        boundary_data_eff.append({
+            "N (eff)": lp,
+            "Success Stop S ≥": s_req if s_req is not None else "No success at this look",
+            "Futility Stop S ≤": (f_req if f_req >= 0 else "No stop"),
+            "Success threshold used": "Final" if (lp == max_n_val) else "Interim"
+        })
+    if boundary_data_eff:
+        st.table(pd.DataFrame(boundary_data_eff))
+    else:
+        st.write("No future efficacy/futility looks (or trial is at/final analysis).")
+
+    st.markdown("---")
+    st.markdown("**Safety Boundaries (by safety look schedule)**")
+    boundary_data_saf = []
+    for lp in safety_look_points:
+        if lp <= total_n:
+            continue
+
+        # Safety threshold (using safety priors)
+        safe_req = next((s for s in range(lp + 1)
+                         if (1 - beta.cdf(safe_limit, prior_alpha_saf + s, prior_beta_saf + (lp - s))) > safe_conf_req),
+                        None)
+
+        boundary_data_saf.append({
+            "N (safety)": lp,
+            "Safety Stop SAEs ≥": safe_req if safe_req is not None else "No safety stop at this look"
+        })
+    if boundary_data_saf:
+        st.table(pd.DataFrame(boundary_data_saf))
+    else:
+        st.write("No future safety looks (or trial is at/final analysis).")
+
+st.markdown("---")
+
+# ==========================================
+# 11. EXPORT / AUDIT SNAPSHOT
+# ==========================================
+if st.button("📥 Prepare Audit-Ready Snapshot"):
+    # 1. Capture the data into a dictionary
+    report_data = {
+        "Metric": [
+            "Timestamp", "N", "Successes", "SAEs",
+            "Interim Success Threshold (%)", "Final Success Threshold (%)",
+            "Futility Threshold (PPoS floor)", "PPoS", "PPoS SE", "PPoS 95% CI",
+            "Prior ESS (eff)", "Prior ESS (saf)",
+            "Posterior pseudo-count (eff)", "Posterior pseudo-count (saf)",
+            "Efficacy Looks", "Safety Looks", "Safety gated to schedule?"
+        ],
+        "Value": [
+            datetime.now().isoformat(), total_n, successes, saes,
+            f"{success_conf_req_interim:.1%}", f"{success_conf_req_final:.1%}",
+            f"{bpp_futility_limit:.2%}", f"{bpp:.2%}", f"{bpp_se:.4f}", f"[{bpp_ci_low:.1%}, {bpp_ci_high:.1%}]",
+            f"{prior_alpha+prior_beta:.1f}", f"{prior_alpha_saf+prior_beta_saf:.1f}",
+            f"{a_eff+b_eff:.1f}", f"{a_saf+b_saf:.1f}",
+            ", ".join(map(str, look_points)) or "None",
+            ", ".join(map(str, safety_look_points)) or "None",
+            "Yes" if safety_gate_to_schedule else "No"
+        ]
+    }
+    # 2. Convert to DataFrame
+    df_report = pd.DataFrame(report_data)
+    # 3. Provide the actual Download Button
+    st.download_button(
+        label="Click here to Download CSV",
+        data=df_report.to_csv(index=False).encode('utf-8'),
+        file_name=f"Trial_Snapshot_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime='text/csv'
+    )
+    # 4. Show a preview so the user knows it worked
+    st.table(df_report)
