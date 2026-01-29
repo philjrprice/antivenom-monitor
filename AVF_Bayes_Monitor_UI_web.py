@@ -29,7 +29,7 @@ successes = st.sidebar.number_input(
 )
 saes = st.sidebar.number_input(
     "Serious Adverse Events (SAEs)", 0, total_n, value=min(1, total_n),
-    help="Number of patients experiencing a Serious Adverse Event (Safety endpoint)."
+    help="Binary safety endpoint: ≥1 SAE per patient counts as 1 SAE event."
 )
 
 # --- Data Integrity Validation ---
@@ -54,8 +54,8 @@ with st.sidebar.expander("Base Study Priors (Efficacy)", expanded=True):
         help="Initial belief strength for efficacy: equivalent 'phantom' failures."
     )
 
-# Timing
-with st.sidebar.expander("Adaptive Timing & Look Points", expanded=True):
+# Timing: efficacy/futility schedule
+with st.sidebar.expander("Adaptive Timing & Look Points (Efficacy/Futility)", expanded=True):
     min_interim = st.number_input(
         "Min N before first check", 1, max_n_val, 14,
         help="Burn-in period: No stop decisions will be made before this sample size."
@@ -88,8 +88,8 @@ with st.sidebar.expander("Success & Futility Rules"):
         help="Stop if the chance of future success (BPP/PPoS) drops below this level."
     )
 
-# Safety rules + Separate Safety Priors
-with st.sidebar.expander("Safety Rules & Priors", expanded=True):
+# Safety rules + Separate Safety Priors + Safety schedule
+with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     safe_limit = st.slider(
         "SAE Upper Limit (%)", 0.05, 0.50, 0.15,
         help="Maximum acceptable toxicity rate."
@@ -107,6 +107,15 @@ with st.sidebar.expander("Safety Rules & Priors", expanded=True):
         "Safety Prior Failures (Beta_safety)", 0.1, 10.0, 1.0, step=0.1,
         help="Initial belief strength for toxicity: equivalent 'phantom' non-toxic outcomes."
     )
+    st.markdown("**Safety Look Schedule (optional; defaults preserve original behavior):**")
+    safety_min_interim = st.number_input(
+        "Safety: Min N before first check", 1, max_n_val, min_interim,
+        help="First safety look (often earlier than efficacy)."
+    )
+    safety_check_cohort = st.number_input(
+        "Safety: Check every X patients", 1, 20, check_cohort,
+        help="Frequency of safety checks."
+    )
 
 # Sensitivity & Equivalence
 with st.sidebar.expander("Sensitivity Prior Settings"):
@@ -118,6 +127,18 @@ with st.sidebar.expander("Equivalence & Heatmap Settings"):
     equiv_bound = st.slider("Equivalence Bound (+/-)", 0.01, 0.10, 0.05,
                             help="Zone around Null Efficacy considered 'Practical Equivalence'.")
     include_heatmap = st.checkbox("Generate Risk-Benefit Heatmap", value=True)
+    st.caption("Note: Heatmap utility is illustrative (score = efficacy − w×toxicity).")
+
+# Monte Carlo controls
+with st.sidebar.expander("Forecasting Controls (PPoS)", expanded=True):
+    mc_draws = st.number_input(
+        "Monte Carlo draws for PPoS", 5000, 100000, 20000, step=5000,
+        help="Higher draws reduce Monte Carlo noise at boundaries."
+    )
+    mc_seed = st.number_input(
+        "Random seed (PPoS)", 0, 10_000_000, 42, step=1,
+        help="Controls reproducibility of PPoS simulations."
+    )
 
 # ==========================================
 # 2. MATH ENGINE (Bayesian Updates)
@@ -132,7 +153,7 @@ p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)  # Prob > Target
 p_goal = 1 - beta.cdf(dream_eff, a_eff, b_eff)     # Prob > Dream
 p_toxic = 1 - beta.cdf(safe_limit, a_saf, b_saf)   # Prob > Safety Limit
 
-# Equivalence around Null (clip to [0,1] for clarity)
+# Equivalence around Null (clip to [0,1] for clarity + display)
 lb, ub = max(0.0, null_eff - equiv_bound), min(1.0, null_eff + equiv_bound)
 p_equiv = beta.cdf(ub, a_eff, b_eff) - beta.cdf(lb, a_eff, b_eff)
 
@@ -141,37 +162,44 @@ eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_ef
 saf_mean, saf_ci = a_saf / (a_saf + b_saf), beta.ppf([0.025, 0.975], a_saf, b_saf)
 
 # ==========================================
-# 3. FORECASTING ENGINE (BPP)
+# 3. FORECASTING ENGINE (BPP) + CI
 # ==========================================
 @st.cache_data
-def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b):
+def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf, p_a, p_b, draws, seed):
     """
     Simulates the remaining trial (Monte Carlo) to calculate BPP (Bayesian Predictive Probability).
-    Returns: PPoS (Probability of Success) and the projected Success Range.
+    Returns: (PPoS, [success range low, high], SE, CI_low, CI_high)
     """
-    np.random.seed(42)
+    rng = np.random.default_rng(seed)
     rem_n = m_n - curr_n
     if rem_n <= 0:
         is_success = (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf
-        return (1.0 if is_success else 0.0), [curr_s, curr_s]
+        ppos = 1.0 if is_success else 0.0
+        se = np.sqrt(ppos * (1 - ppos) / max(1, draws))
+        ci_low = max(0.0, ppos - 1.96 * se)
+        ci_high = min(1.0, ppos + 1.96 * se)
+        return ppos, [curr_s, curr_s], se, ci_low, ci_high
 
     # 1. Sample potential true rates from current posterior
-    future_rates = np.random.beta(p_a + curr_s, p_b + curr_n - curr_s, 5000)
+    future_rates = rng.beta(p_a + curr_s, p_b + curr_n - curr_s, draws)
     # 2. Simulate outcomes for remaining patients based on those rates
-    future_successes = np.random.binomial(rem_n, future_rates)
+    future_successes = rng.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
     # 3. Check how many simulations end in success
     final_confs = 1 - beta.cdf(t_eff, p_a + total_proj_s, p_b + (m_n - total_proj_s))
-    ppos = np.mean(final_confs > s_conf)
+    ppos = float(np.mean(final_confs > s_conf))
     s_range = [int(np.percentile(total_proj_s, 5)), int(np.percentile(total_proj_s, 95))]
-    return ppos, s_range
+
+    # MC uncertainty (normal approx on Bernoulli)
+    se = float(np.sqrt(ppos * (1 - ppos) / max(1, draws)))
+    ci_low = max(0.0, ppos - 1.96 * se)
+    ci_high = min(1.0, ppos + 1.96 * se)
+    return ppos, s_range, se, ci_low, ci_high
 
 # Run the forecast for the current state
-bpp, ps_range = get_enhanced_forecasts(successes, total_n, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)
-
-# (Legacy) Evidence shift elements used previously; now replaced by proper BF
-skep_a, skep_b = 1 + successes, skp_p + (total_n - successes)
-skep_prob = 1 - beta.cdf(target_eff, skep_a, skep_b)
+bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
+    successes, total_n, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta, mc_draws, mc_seed
+)
 
 # ==========================================
 # 4. MAIN DASHBOARD LAYOUT
@@ -184,9 +212,12 @@ m1.metric("Sample N", f"{total_n}/{max_n_val}", help="Current Enrollment / Max P
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}", help="The average expected efficacy based on current data.")
 m3.metric(f"P(>{target_eff:.0%})", f"{p_target:.1%}", help=f"Probability that True Efficacy is greater than {target_eff:.0%}.")
 m4.metric("Safety Risk", f"{p_toxic:.1%}", help=f"Probability that SAE Rate is greater than {safe_limit:.0%}.")
-m5.metric("PPoS (Final)", f"{bpp:.1%}", help="Predicted Probability of Success: Chance of winning if we continue to Max N.")
+m5.metric("PPoS (Final)", f"{bpp:.1%}", help=f"Predicted Probability of Success; 95% CI [{bpp_ci_low:.1%}, {bpp_ci_high:.1%}]")
 m6.metric("Prior ESS (Eff.)", f"{prior_alpha + prior_beta:.1f}", help="Prior effective sample size for efficacy only.")
-st.caption(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**  |  Prob Equivalence: **{p_equiv:.1%}**")
+st.caption(
+    f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**  |  Prob Equivalence: **{p_equiv:.1%}** "
+    f" (band applied: [{lb:.0%}, {ub:.0%}])"
+)
 
 st.markdown("---")
 
@@ -198,7 +229,7 @@ if p_toxic > safe_conf_req:
     st.error(f"🛑 **GOVERNING RULE: SAFETY STOP.** Risk ({p_toxic:.1%}) exceeds {safe_conf_req:.0%} threshold.")
 elif is_look_point:
     if bpp < bpp_futility_limit:
-        st.warning(f"⚠️ **GOVERNING RULE: FUTILITY STOP.** PPoS ({bpp:.1%}) below floor.")
+        st.warning(f"⚠️ **GOVERNING RULE: FUTILITY STOP.** PPoS ({bpp:.1%}) below floor. (SE={bpp_se:.3f})")
     elif p_target > success_conf_req:
         st.success(f"✅ **GOVERNING RULE: EFFICACY SUCCESS.** Evidence achieved at {p_target:.1%}.")
     else:
@@ -214,41 +245,59 @@ else:
 # ==========================================
 st.subheader("📈 Trial Decision Corridors")
 
-# Calculate boundaries for all potential look points
+# Efficacy/futility look points
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
-succ_line, fut_line, saf_line = [], [], []
 
-# Precompute boundaries (success, futility, safety) for each look N
+# Safety look points (independent schedule; defaults match efficacy schedule)
+safety_look_points = [safety_min_interim + (i * safety_check_cohort)
+                      for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]
+viz_n_safety = np.array(safety_look_points)
+
+# Helper: monotone futility boundary via isotonic enforcement
+@st.cache_data
+def futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta, draws, seed):
+    ppos_by_S = np.empty(lp + 1, dtype=float)
+    for s in range(lp + 1):
+        ppos_by_S[s] = get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req,
+                                              prior_alpha, prior_beta, draws, seed)[0]
+    # Enforce monotonicity (PPoS should be non-decreasing in S)
+    ppos_monotone = np.maximum.accumulate(ppos_by_S)
+    idx = np.where(ppos_monotone <= bpp_futility_limit)[0]
+    return int(idx[-1]) if idx.size > 0 else -1
+
+succ_line, fut_line = [], []
 for lp in viz_n:
     # Success boundary: smallest S where posterior P(>target) > requirement
     s_req = next((s for s in range(lp + 1)
                   if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > success_conf_req),
-                 lp + 1)
+                 None)
+    # Futility boundary: highest S where PPoS is still BELOW the limit (monotone-safe)
+    f_req = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req,
+                                   prior_alpha, prior_beta, mc_draws, mc_seed)
+    succ_line.append(s_req)  # may be None (no success at this look)
+    fut_line.append(max(0, f_req) if f_req >= 0 else -1)
 
-    # Futility boundary: highest S where BPP (PPoS) is still BELOW the limit
-    f_req = next((s for s in reversed(range(lp + 1))
-                  if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] <= bpp_futility_limit),
-                 -1)
-
-    # Safety boundary: smallest SAE count where P(tox>limit) > safety confidence
+# Safety boundaries computed on the safety schedule
+saf_line = []
+for lp in viz_n_safety:
     saf_req = next((s for s in range(lp + 1)
                     if (1 - beta.cdf(safe_limit, prior_alpha_saf + s, prior_beta_saf + (lp - s))) > safe_conf_req),
-                   "N/A")
-
-    succ_line.append(s_req)
-    fut_line.append(max(0, f_req))
-    saf_line.append(saf_req if saf_req != "N/A" else None)
+                   None)
+    saf_line.append(saf_req)
 
 # For quick lookup during simulations
-succ_req_by_n = {int(n): int(s) if s != "N/A" else None for n, s in zip(viz_n, succ_line)}
-futi_max_by_n = {int(n): int(f) if isinstance(f, (int, np.integer)) else -1 for n, f in zip(viz_n, fut_line)}
-safety_req_by_n = {int(n): (None if s is None else int(s)) for n, s in zip(viz_n, saf_line)}
+succ_req_by_n = {int(n): (None if s is None else int(s)) for n, s in zip(viz_n, succ_line)}
+futi_max_by_n = {int(n): int(f) if isinstance(f, (int, np.integer)) and f >= 0 else -1 for n, f in zip(viz_n, fut_line)}
+safety_req_by_n = {int(n): (None if s is None else int(s)) for n, s in zip(viz_n_safety, saf_line)}
 
-# Plot the efficacy success/futility corridors
+# Plot efficacy success/futility corridors (unchanged visual; safety shown in table)
 fig_corr = go.Figure()
-fig_corr.add_trace(go.Scatter(x=viz_n, y=succ_line, name="Success Boundary", line=dict(color='green', dash='dash')))
-fig_corr.add_trace(go.Scatter(x=viz_n, y=fut_line, name="Futility Boundary", line=dict(color='red', dash='dash')))
+# Success boundary: draw with gaps where None
+fig_corr.add_trace(go.Scatter(x=viz_n, y=[np.nan if s is None else s for s in succ_line],
+                              name="Success Boundary", line=dict(color='green', dash='dash')))
+fig_corr.add_trace(go.Scatter(x=viz_n, y=[np.nan if f < 0 else f for f in fut_line],
+                              name="Futility Boundary", line=dict(color='red', dash='dash')))
 fig_corr.add_trace(go.Scatter(x=[total_n], y=[successes], mode='markers+text', text=["Current"],
                               name="Current Data", marker=dict(size=12, color='blue')))
 fig_corr.update_layout(xaxis_title="Sample Size (N)", yaxis_title="Successes (S)", height=400, margin=dict(t=20, b=0))
@@ -288,10 +337,13 @@ fig.update_layout(xaxis=dict(range=[0, 1]), height=400, margin=dict(l=0, r=0, t=
 st.plotly_chart(fig, use_container_width=True)
 
 if include_heatmap:
-    st.subheader("⚖️ Risk-Benefit Trade-off Heatmap")
+    st.subheader("⚖️ Risk-Benefit Trade-off Heatmap (Illustrative)")
     eff_grid, saf_grid = np.linspace(0.2, 0.9, 50), np.linspace(0.0, 0.4, 50)
+    # Editable toxicity weight (optional)
+    w_tox = st.slider("Heatmap toxicity weight (w)", 0.5, 5.0, 2.0, step=0.5,
+                      help="Illustrative utility: efficacy − w×toxicity")
     E, S = np.meshgrid(eff_grid, saf_grid)
-    score = E - (2 * S)  # Illustrative linear index
+    score = E - (w_tox * S)  # Illustrative linear index
     fig_heat = px.imshow(score, x=eff_grid, y=saf_grid,
                          labels=dict(x="Efficacy Rate", y="SAE Rate", color="Benefit Score"),
                          color_continuous_scale="RdYlGn", origin="lower")
@@ -300,7 +352,7 @@ if include_heatmap:
     st.plotly_chart(fig_heat, use_container_width=True)
 
 # ==========================================
-# 8. TEXTUAL BREAKDOWN & SENSITIVITY
+# 8. TEXTUAL BREAKDOWN & SENSITIVITY + Proper BF10
 # ==========================================
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
@@ -311,85 +363,24 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Prob > Null ({null_eff:.0%}): **{p_null:.1%}**")
         st.write(f"Prob > Target ({target_eff:.0%}): **{p_target:.1%}**")
         st.write(f"Prob > Goal ({dream_eff:.0%}): **{p_goal:.1%}**")
-        st.write(f"Prob Equivalence: **{p_equiv:.1%}**")
+        st.write(f"Prob Equivalence: **{p_equiv:.1%}** (band: [{lb:.0%}, {ub:.0%}])")
         st.write(f"Projected Success Range: **{ps_range[0]} - {ps_range[1]} successes**")
     with c2:
-        st.markdown("**Safety Summary**")
+        st.markdown("**Safety Summary (Binary SAE)**")
         st.write(f"Mean Toxicity: **{saf_mean:.1%}**")
         st.write(f"95% CI: **[{saf_ci[0]:.1%} - {saf_ci[1]:.1%}]**")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
+        st.caption("Safety is modeled as binary per patient: ≥1 SAE ⇒ SAE=1.")
     with c3:
         st.markdown("**Operational Info**")
-        st.write(f"BPP Success Forecast: **{bpp:.1%}**")
+        st.write(f"BPP Success Forecast: **{bpp:.1%}**  (SE={bpp_se:.3f}, 95% CI [{bpp_ci_low:.1%}, {bpp_ci_high:.1%}])")
         st.write(f"PPoS (Predicted Prob): **{bpp:.1%}**")
         st.write(f"Posterior pseudo-count (efficacy): **{a_eff + b_eff:.1f}**")
         st.write(f"Posterior pseudo-count (safety): **{a_saf + b_saf:.1f}**")
-        st.write(f"Look Points: **N = {', '.join(map(str, look_points))}**")
+        st.write(f"Efficacy Look Points: **N = {', '.join(map(str, look_points)) or 'None'}**")
+        st.write(f"Safety Look Points: **N = {', '.join(map(str, safety_look_points)) or 'None'}**")
 
-# ==========================================
-# 9. TYPE I ERROR SIMULATION (Monte Carlo) -- Extended with Safety & Futility
-# ==========================================
-st.markdown("---")
-st.subheader("🧪 Design Integrity Check")
-
-num_sims = 10000
-with st.expander("Simulation Options", expanded=False):
-    sim_safety_rate = st.slider(
-        "Assumed TRUE SAE rate for Type I simulation", 0.0, 0.9, float(safe_limit), step=0.01,
-        help="Used to simulate SAEs while testing Type I (efficacy false positive) under p=p0."
-    )
-
-if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
-    with st.spinner(f"Simulating {num_sims:,} trials..."):
-        np.random.seed(42)
-
-        fp_count = 0  # False positives for efficacy
-        # Ensure we have the look points for simulation
-        sim_looks = look_points
-
-        # Precomputed boundaries already available: succ_req_by_n, futi_max_by_n, safety_req_by_n
-        for _ in range(num_sims):
-            # Simulate efficacy at p0 (null), and safety at chosen SAE rate
-            trial_eff = np.random.binomial(1, null_eff, max_n_val)
-            trial_saf = np.random.binomial(1, sim_safety_rate, max_n_val)
-
-            # Walk through looks
-            declared = False
-            for lp in sim_looks:
-                s = int(trial_eff[:lp].sum())
-                t = int(trial_saf[:lp].sum())
-
-                # Apply stopping in priority order: Safety -> Futility -> Efficacy
-                saf_thr = safety_req_by_n.get(lp, None)
-                if saf_thr is not None and t >= saf_thr:
-                    # Safety stop (not a false positive)
-                    declared = True
-                    break
-
-                fut_thr = futi_max_by_n.get(lp, -1)
-                if fut_thr >= 0 and s <= fut_thr:
-                    # Futility stop (not a false positive)
-                    declared = True
-                    break
-
-                suc_thr = succ_req_by_n.get(lp, None)
-                if suc_thr is not None and s >= suc_thr:
-                    # Efficacy success: under p=p0 this is a false positive
-                    fp_count += 1
-                    declared = True
-                    break
-
-            # If no decision during looks, no false positive is counted.
-
-        type_i_estimate = fp_count / num_sims
-        st.warning(f"Estimated Sequential Type I Error (with safety & futility): **{type_i_estimate:.2%}**")
-        st.caption("This estimates the design-level Alpha considering all stopping rules at scheduled looks.")
-
-# ==========================================
-# 10. Sensitivity Analysis & Proper Bayes Factor
-# ==========================================
-st.subheader("🧪 Sensitivity Analysis & Robustness")
-
+st.subheader("🧪 Sensitivity Analysis & Robustness (with Bayes Factors)")
 def bayes_factor_point_null(s, n, a, b, p0):
     """
     Proper Bayes Factor BF10 comparing:
@@ -403,9 +394,11 @@ def bayes_factor_point_null(s, n, a, b, p0):
     log_m0 = successes * np.log(p0) + failures * np.log(1 - p0)
     return float(np.exp(log_m1 - log_m0))
 
-priors_list = [ (f"Optimistic ({opt_p}:1)", opt_p, 1),
-                ("Neutral (1:1)", 1, 1),
-                (f"Skeptical (1:{skp_p})", 1, skp_p) ]
+priors_list = [
+    (f"Optimistic ({opt_p}:1)", opt_p, 1),
+    ("Neutral (1:1)", 1, 1),
+    (f"Skeptical (1:{skp_p})", 1, skp_p)
+]
 cols, target_probs = st.columns(3), []
 
 for i, (name, ap, bp) in enumerate(priors_list):
@@ -423,49 +416,15 @@ for i, (name, ap, bp) in enumerate(priors_list):
         st.write(f"Prob > Target: **{p_t_s:.1%}**")
         st.write(f"Prob > Goal: **{p_g_s:.1%}**")
 
-        # Provide a proper Bayes Factor only for the Neutral prior (to replace previous mislabel)
-        if "Neutral" in name:
-            bf10 = bayes_factor_point_null(successes, total_n, ap, bp, null_eff)
-            # Formatting for large/small values
-            if bf10 >= 1e4 or bf10 <= 1e-4:
-                bf_str = f"{bf10:.2e}"
-            else:
-                bf_str = f"{bf10:.2f}"
-            st.write(f"Bayes Factor BF₁₀ (H1: Beta({ap},{bp}) vs H0: p={null_eff:.0%}): **{bf_str}**")
-            st.caption("Interpretation: BF₁₀>1 favors H1 (treatment > null); >10 is strong evidence.")
+        bf10 = bayes_factor_point_null(successes, total_n, ap, bp, null_eff)
+        bf_str = f"{bf10:.2e}" if (bf10 >= 1e4 or bf10 <= 1e-4) else f"{bf10:.2f}"
+        st.write(f"Bayes Factor BF₁₀ (H1: Beta({ap},{bp}) vs H0: p={null_eff:.0%}): **{bf_str}**")
 
+st.caption("Interpretation: BF₁₀>1 favors H1; >10 is strong evidence. BF₁₀<1/10 is strong evidence for H0.")
 spread = max(target_probs) - min(target_probs)
 st.markdown(f"**Interpretation:** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** "
             f"({spread:.1%} variance between prior mindsets).")
 
 # ==========================================
-# 11. REGULATORY TABLE
+# 9. TYPE I ERROR SIMULATION (Monte Carlo) -- Extended with Safety & Futility + Guardrails
 # ==========================================
-with st.expander("📋 Regulatory Decision Boundary Table", expanded=True):
-    boundary_data = []
-    for lp in look_points:
-        if lp <= total_n:
-            continue
-
-        # Success threshold
-        s_req = next((s for s in range(lp + 1)
-                      if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > success_conf_req),
-                     "N/A")
-
-        # Futility threshold (highest S that triggers a stop)
-        f_req = next((s for s in reversed(range(lp + 1))
-                      if get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_req, prior_alpha, prior_beta)[0] <= bpp_futility_limit),
-                     -1)
-
-        # Safety threshold (using safety priors)
-        safe_req = next((s for s in range(lp + 1)
-                         if (1 - beta.cdf(safe_limit, prior_alpha_saf + s, prior_beta_saf + (lp - s))) > safe_conf_req),
-                        "N/A")
-
-        boundary_data.append({
-            "N": lp,
-            "Success Stop S ≥": s_req,
-            "Futility Stop S ≤": f_req if f_req != -1 else "No Stop",
-            "Safety Stop SAEs ≥": safe_req
-        })
-
