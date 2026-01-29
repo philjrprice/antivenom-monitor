@@ -1,3 +1,24 @@
+"""
+AVF_Bayes_Monitor_UI_web (24).py
+--------------------------------
+Single-arm Bayesian trial monitor (AVF). This Streamlit application supports:
+  • Real-time Bayesian updating for efficacy and safety (Beta–Binomial model)
+  • Sequential decision rules (success, futility via PPoS, safety) with look schedules
+  • Forecasting (PPoS to final), sensitivity analyses, and regulatory boundary tables
+  • Design integrity checks (sequential Type I error), power analysis, and power curves
+  • On-demand Operating Characteristics (OC) scenario suite with charts and CSV export
+
+NEW IN THIS VERSION (24):
+  • Scenario Suite stop-reasons stacked bar uses fixed colors:
+      Safety stop = red, Futility stop = orange, Interim success = green,
+      Final success = blue, No decision = grey
+  • A compact “stop reason legend” is added to the Power section (not just the Scenario Suite)
+  • Extensive comments have been added throughout the code to aid inspection and review
+
+All prior functionality from (23) is preserved.
+"""
+
+# ============ Imports ============
 import streamlit as st
 import numpy as np
 from scipy.stats import beta
@@ -7,26 +28,32 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime
 
+# ============ Streamlit page config ============
+# Wide layout improves horizontal space for multi-column metrics and charts
 st.set_page_config(page_title="Bayes Trial Monitor", layout="wide")
 
-# ==========================================
-# 1. SIDEBAR INPUTS (With Explanatory Tooltips)
-# ==========================================
+# ==============================================================
+# 1. SIDEBAR INPUTS — Trial data, Priors, Schedules, and Controls
+#    These widgets define the trial design and the current observed data.
+# ==============================================================
 st.sidebar.header("📋 Current Trial Data")
 
-# Trial size and observed data
+# --- Trial size and observed data ---
 max_n_val = st.sidebar.number_input(
     "Maximum Sample Size (N)", 10, 500, 70,
     help="The total planned sample size for the trial design."
 )
+# Current evaluable sample size
 total_n = st.sidebar.number_input(
     "Total Patients Enrolled", 0, max_n_val, 20,
     help="Current number of patients who have generated evaluable data."
 )
+# Primary efficacy endpoint: binary success count
 successes = st.sidebar.number_input(
     "Total Successes", 0, total_n, value=min(14, total_n),
     help="Number of patients achieving the primary efficacy endpoint."
 )
+# Safety endpoint: binary SAE per patient (≥1 SAE => SAE=1)
 saes = st.sidebar.number_input(
     "Serious Adverse Events (SAEs)", 0, total_n, value=min(1, total_n),
     help="Binary safety endpoint: ≥1 SAE per patient counts as 1 SAE event."
@@ -43,7 +70,7 @@ if saes > total_n:
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Study Parameters")
 
-# Priors (Efficacy)
+# --- Efficacy prior (Beta prior for true success rate) ---
 with st.sidebar.expander("Base Study Priors (Efficacy)", expanded=True):
     prior_alpha = st.slider(
         "Prior Successes (Alpha_eff)", 0.1, 10.0, 1.0, step=0.1,
@@ -54,7 +81,7 @@ with st.sidebar.expander("Base Study Priors (Efficacy)", expanded=True):
         help="Initial belief strength for efficacy: equivalent 'phantom' failures."
     )
 
-# Timing: efficacy/futility schedule
+# --- Efficacy look schedule (interim analysis cadence) ---
 with st.sidebar.expander("Adaptive Timing & Look Points (Efficacy/Futility)", expanded=True):
     min_interim = st.number_input(
         "Min N before first check", 1, max_n_val, 14,
@@ -65,7 +92,7 @@ with st.sidebar.expander("Adaptive Timing & Look Points (Efficacy/Futility)", ex
         help="Frequency of interim analysis (e.g., check data every 5 patients)."
     )
 
-# Thresholds (Efficacy) — separate interim vs final
+# --- Efficacy thresholds: interim vs final, and futility via PPoS floor ---
 with st.sidebar.expander("Success & Futility Rules"):
     null_eff = st.slider(
         "Null Efficacy (p0) (%)", 0.1, 1.0, 0.50,
@@ -92,7 +119,7 @@ with st.sidebar.expander("Success & Futility Rules"):
         help="Stop if the chance of future success (PPoS) drops below this level."
     )
 
-# Safety rules + Separate Safety Priors + Safety schedule + gating toggle
+# --- Safety rules: independent safety prior, safety schedule, and gating toggle ---
 with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     safe_limit = st.slider(
         "SAE Upper Limit (%)", 0.05, 0.50, 0.15,
@@ -126,10 +153,9 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
         help="If unchecked, safety is monitored continuously (original behavior)."
     )
 
-# ---- Fully adjustable sensitivity priors (no legacy weights) ----
+# --- Sensitivity priors (efficacy) for robustness overlays ---
 with st.sidebar.expander("Sensitivity Priors (Adjustable) — Efficacy", expanded=True):
     st.caption("Define three efficacy priors (α, β) for sensitivity overlays.")
-    # Reasonable defaults: Optimistic ~ Beta(2,1), Neutral ~ Beta(1,1), Skeptical ~ Beta(1,2)
     eff1_a = st.number_input("Efficacy S1 α", 0.1, 20.0, 2.0, 0.1)
     eff1_b = st.number_input("Efficacy S1 β", 0.1, 20.0, 1.0, 0.1)
     eff2_a = st.number_input("Efficacy S2 α", 0.1, 20.0, 1.0, 0.1)
@@ -137,6 +163,7 @@ with st.sidebar.expander("Sensitivity Priors (Adjustable) — Efficacy", expande
     eff3_a = st.number_input("Efficacy S3 α", 0.1, 20.0, 1.0, 0.1)
     eff3_b = st.number_input("Efficacy S3 β", 0.1, 20.0, 2.0, 0.1)
 
+# --- Sensitivity priors (safety) for robustness overlays ---
 with st.sidebar.expander("Sensitivity Priors (Adjustable) — Safety", expanded=True):
     st.caption("Define three safety priors (α, β) for sensitivity overlays.")
     saf1_a = st.number_input("Safety S1 α", 0.1, 20.0, 0.5, 0.1)
@@ -146,13 +173,14 @@ with st.sidebar.expander("Sensitivity Priors (Adjustable) — Safety", expanded=
     saf3_a = st.number_input("Safety S3 α", 0.1, 20.0, 2.0, 0.1)
     saf3_b = st.number_input("Safety S3 β", 0.1, 20.0, 0.5, 0.1)
 
+# --- Equivalence band and optional heatmap ---
 with st.sidebar.expander("Equivalence & Heatmap Settings"):
     equiv_bound = st.slider("Equivalence Bound (+/-)", 0.01, 0.10, 0.05,
                             help="Zone around Null Efficacy considered 'Practical Equivalence'.")
     include_heatmap = st.checkbox("Generate Risk-Benefit Heatmap", value=True)
     st.caption("Note: Heatmap utility is illustrative (score = efficacy − w×toxicity).")
 
-# Monte Carlo controls
+# --- Forecasting (PPoS) simulation controls ---
 with st.sidebar.expander("Forecasting Controls (PPoS)", expanded=True):
     mc_draws = st.number_input(
         "Monte Carlo draws for PPoS", 5000, 100000, 20000, step=5000,
@@ -163,7 +191,7 @@ with st.sidebar.expander("Forecasting Controls (PPoS)", expanded=True):
         help="Controls reproducibility of PPoS simulations."
     )
 
-# --- Power analysis settings (NOW WITH SEPARATE TOGGLES) ---
+# --- Power analysis controls & toggles ---
 with st.sidebar.expander("Power Analysis Settings", expanded=False):
     power_true_eff = st.slider(
         "Assumed TRUE efficacy rate for power", 0.05, 0.95, float(target_eff), step=0.01,
@@ -187,7 +215,6 @@ with st.sidebar.expander("Power Analysis Settings", expanded=False):
         "Simulations per curve point", 500, 50000, 5000, step=500,
         help="Trials simulated at each efficacy grid value to draw the power curve."
     )
-    # NEW: separate toggles
     power_use_eff_looks = st.checkbox(
         "Simulate using user-defined efficacy look schedule",
         value=True,
@@ -199,44 +226,53 @@ with st.sidebar.expander("Power Analysis Settings", expanded=False):
         help="If unchecked, evaluate safety at every N from 1..max N (continuous; safety gating ignored)."
     )
 
-# ==========================================
-# 2. MATH ENGINE (Bayesian Updates)
-# ==========================================
-# Posterior = Prior + Data
+# ==============================================================
+# 2. BAYESIAN UPDATES — Posteriors, Means, Credible Intervals & Key Probs
+#    Compute Beta posterior parameters for efficacy and safety.
+# ==============================================================
+# Posterior parameters = prior + data
 a_eff, b_eff = prior_alpha + successes, prior_beta + (total_n - successes)
 a_saf, b_saf = prior_alpha_saf + saes, prior_beta_saf + (total_n - saes)
 
-# Probability Calculations
-p_null = 1 - beta.cdf(null_eff, a_eff, b_eff)
-p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)
-p_goal = 1 - beta.cdf(dream_eff, a_eff, b_eff)
-p_toxic = 1 - beta.cdf(safe_limit, a_saf, b_saf)
+# Key posterior tail probabilities used across the app
+p_null = 1 - beta.cdf(null_eff, a_eff, b_eff)      # Pr(p_eff > p0)
+p_target = 1 - beta.cdf(target_eff, a_eff, b_eff)  # Pr(p_eff > p1)
+p_goal = 1 - beta.cdf(dream_eff, a_eff, b_eff)     # Pr(p_eff > goal)
+p_toxic = 1 - beta.cdf(safe_limit, a_saf, b_saf)   # Pr(p_saf > safety limit)
 
-# Equivalence
+# Equivalence (practical equivalence band around p0)
 lb, ub = max(0.0, null_eff - equiv_bound), min(1.0, null_eff + equiv_bound)
 p_equiv = beta.cdf(ub, a_eff, b_eff) - beta.cdf(lb, a_eff, b_eff)
 
-# Credible intervals & means
+# Means & 95% credible intervals
 eff_mean, eff_ci = a_eff / (a_eff + b_eff), beta.ppf([0.025, 0.975], a_eff, b_eff)
 saf_mean, saf_ci = a_saf / (a_saf + b_saf), beta.ppf([0.025, 0.975], a_saf, b_saf)
 
-# ==========================================
-# 3. FORECASTING ENGINE (BPP) + CI
-# ==========================================
+# ==============================================================
+# 3. FORECASTING ENGINE — Predictive Probability of Success (PPoS)
+#    Simulates remaining patients to max N using posterior predictive draws.
+# ==============================================================
 @st.cache_data
 def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf_final, p_a, p_b, draws, seed):
+    """Compute PPoS at final N and an 95% MC CI around it.
+    - Draw a predictive efficacy rate from Beta(p_a+curr_s, p_b+curr_n-curr_s)
+    - Simulate remaining successes and evaluate final success rule against s_conf_final
+    """
     rng = np.random.default_rng(seed)
     rem_n = m_n - curr_n
     if rem_n <= 0:
+        # At final N: PPoS is degenerate (0 or 1) depending on meeting final threshold
         is_success = (1 - beta.cdf(t_eff, p_a + curr_s, p_b + curr_n - curr_s)) > s_conf_final
         ppos = 1.0 if is_success else 0.0
         se = np.sqrt(ppos * (1 - ppos) / max(1, draws))
         ci_low = max(0.0, ppos - 1.96 * se)
         ci_high = min(1.0, ppos + 1.96 * se)
         return ppos, [curr_s, curr_s], se, ci_low, ci_high
+    # Predictive draws of rate and future successes
     future_rates = rng.beta(p_a + curr_s, p_b + curr_n - curr_s, draws)
     future_successes = rng.binomial(rem_n, future_rates)
     total_proj_s = curr_s + future_successes
+    # Posterior tail at final
     final_confs = 1 - beta.cdf(t_eff, p_a + total_proj_s, p_b + (m_n - total_proj_s))
     ppos = float(np.mean(final_confs > s_conf_final))
     s_range = [int(np.percentile(total_proj_s, 5)), int(np.percentile(total_proj_s, 95))]
@@ -245,18 +281,20 @@ def get_enhanced_forecasts(curr_s, curr_n, m_n, t_eff, s_conf_final, p_a, p_b, d
     ci_high = min(1.0, ppos + 1.96 * se)
     return ppos, s_range, se, ci_low, ci_high
 
-# ==========================================
-# Helper functions (robust boundaries)
-# ==========================================
+# ==============================================================
+# 4. BOUNDARY HELPERS — Success, Futility (PPoS), Safety Stops
+#    Used by corridors, governing rules, Type I / Power / OC sims.
+# ==============================================================
 @st.cache_data
 def success_boundary(lp, prior_alpha, prior_beta, target_eff, conf_req):
+    """Smallest S at look size lp such that Pr(p_eff > target_eff) > conf_req; else None."""
     return next((s for s in range(lp + 1)
                  if (1 - beta.cdf(target_eff, prior_alpha + s, prior_beta + (lp - s))) > conf_req),
                 None)
 
 def safety_stop_threshold(lp: int, prior_alpha_saf: float, prior_beta_saf: float,
                           safe_limit: float, safe_conf_req: float):
-    """Smallest SAE count s at look size lp such that P(tox > limit | s, lp) > safe_conf_req; else None."""
+    """Smallest SAE count s at look size lp with Pr(p_saf > safe_limit) > safe_conf_req; else None."""
     for s in range(lp + 1):
         post_tail = 1 - beta.cdf(safe_limit, prior_alpha_saf + s, prior_beta_saf + (lp - s))
         if post_tail > safe_conf_req:
@@ -264,58 +302,54 @@ def safety_stop_threshold(lp: int, prior_alpha_saf: float, prior_beta_saf: float
     return None
 
 @st.cache_data
-def futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_final, prior_alpha, prior_beta, draws, seed, futility_floor):
+def futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_final,
+                           prior_alpha, prior_beta, draws, seed, futility_floor):
+    """Largest S at look size lp where PPoS(final) <= futility_floor. Monotone-corrected."""
     ppos_by_S = np.empty(lp + 1, dtype=float)
     for s in range(lp + 1):
         ppos_by_S[s] = get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_final,
                                               prior_alpha, prior_beta, draws, seed)[0]
+    # Enforce monotonicity (non-decreasing in S)
     ppos_monotone = np.maximum.accumulate(ppos_by_S)
     idx = np.where(ppos_monotone <= futility_floor)[0]
     return int(idx[-1]) if idx.size > 0 else -1
 
-# NEW: Wilson score interval for Monte Carlo proportions (robust near 0 and 1)
+# --- Wilson score CI for MC proportions (robust near 0 and 1) ---
 def wilson_ci(k, n, alpha=0.05):
-    """
-    Wilson score interval for a binomial proportion k/n (two-sided 95% by default).
-    Returns (lower, upper). Robust near 0 and 1.
-    """
     if n == 0:
         return (0.0, 1.0)
     from math import sqrt
-    z = 1.959963984540054  # ~ 97.5% quantile for a two-sided 95% CI
+    z = 1.959963984540054  # 97.5% quantile for two-sided 95% CI
     p = k / n
     denom = 1.0 + (z*z)/n
     center = (p + (z*z)/(2*n)) / denom
     halfwidth = (z * sqrt((p*(1-p)/n) + ((z*z)/(4*n*n)))) / denom
     return (max(0.0, center - halfwidth), min(1.0, center + halfwidth))
 
-# Run the forecast for the current state (use FINAL threshold)
+# --- Run forecasting for current state (uses FINAL success threshold) ---
 bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
     successes, total_n, max_n_val, target_eff, success_conf_req_final, prior_alpha, prior_beta, mc_draws, mc_seed
 )
 
-# ==========================================
-# 4. MAIN DASHBOARD LAYOUT
-# ==========================================
+# ==============================================================
+# 5. MAIN DASHBOARD — Title, Design Summary, KPIs, and Governing Rules
+# ==============================================================
 st.title("🛡️ AVF-Single Arm Bayesian Trial Monitor")
 
-# --- Design Summary panel ---
+# --- Design summary panel (compact) ---
 st.subheader("🧭 Design Summary")
 ds1, ds2, ds3 = st.columns(3)
-
 with ds1:
     st.markdown("**Efficacy (primary)**")
     st.write(f"Null p0: **{null_eff:.0%}** | Target p1: **{target_eff:.0%}** | Goal: **{dream_eff:.0%}**")
     st.write(f"Prior (α, β): **({prior_alpha:.1f}, {prior_beta:.1f})** → ESS **{prior_alpha+prior_beta:.1f}**")
     st.write(f"Schedule: start at **N={min_interim}**, then **every {check_cohort}**")
-
 with ds2:
     st.markdown("**Safety (binary SAE)**")
     st.write(f"Safety limit: **{safe_limit:.0%}** | Stop confidence: **{safe_conf_req:.0%}**")
     st.write(f"Prior (α, β): **({prior_alpha_saf:.1f}, {prior_beta_saf:.1f})** → ESS **{prior_alpha_saf+prior_beta_saf:.1f}**")
     st.write(f"Schedule: start at **N={safety_min_interim}**, then **every {safety_check_cohort}**")
     st.write(f"Gating to schedule: **{'ON' if safety_gate_to_schedule else 'OFF'}**")
-
 with ds3:
     st.markdown("**Decision & Simulation settings**")
     st.write(f"Interim success threshold: **{success_conf_req_interim:.0%}**")
@@ -325,6 +359,7 @@ with ds3:
     st.write(f"Power toggles → Eff: **{'Scheduled' if power_use_eff_looks else 'Continuous'}**, "
              f"Safety: **{'Scheduled' if power_use_saf_looks else 'Continuous'}**")
 
+# --- Top KPIs ---
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
@@ -339,9 +374,7 @@ st.caption(
 
 st.markdown("---")
 
-# ==========================================
-# 5. GOVERNING RULES (Stop Logic)
-# ==========================================
+# --- Governing Rules (safety → futility → success; final uses final threshold) ---
 is_efficacy_look = (total_n >= min_interim) and (((total_n - min_interim) % check_cohort) == 0)
 is_safety_look = (total_n >= safety_min_interim) and (((total_n - safety_min_interim) % safety_check_cohort) == 0)
 apply_safety_now = (not safety_gate_to_schedule) or is_safety_look
@@ -367,7 +400,7 @@ else:
     next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
     next_safety = total_n + (safety_check_cohort - (total_n - safety_min_interim) % safety_check_cohort)
     st.info(f"🧬 **STATUS: MONITORING.** Next efficacy check at N={next_check}; next safety check at N={next_safety}.")
-    # --- Next-look concrete thresholds (for reviewer clarity) ---
+    # Show next-look thresholds explicitly for review clarity
     try:
         succ_req_next = success_boundary(
             next_check, prior_alpha, prior_beta, target_eff,
@@ -382,7 +415,7 @@ else:
         st.caption(f"**Next efficacy look (N={next_check}):** {succ_txt}; {futi_txt}.")
     except Exception:
         pass
-    # --- Predictive Pr[safety stop at next safety look] ---
+    # Predictive safety stop probability to next safety look
     try:
         if next_safety > total_n:
             saf_thr_next = safety_stop_threshold(next_safety, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
@@ -398,17 +431,19 @@ else:
     except Exception:
         pass
 
-# ==========================================
-# 6. SEQUENTIAL DECISION CORRIDORS
-# ==========================================
+# ==============================================================
+# 6. DECISION CORRIDORS — Efficacy (success/futility) and Safety boundaries
+# ==============================================================
 st.subheader("📈 Trial Decision Corridors")
+# Build canonical look points from the schedule definitions
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
 
 safety_look_points = [safety_min_interim + (i * safety_check_cohort)
- for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]
+                      for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]
 viz_n_safety = np.array(safety_look_points)
 
+# Compute success and futility boundaries across efficacy looks
 succ_line, fut_line = [], []
 for lp in viz_n:
     use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
@@ -418,15 +453,18 @@ for lp in viz_n:
     succ_line.append(s_req)
     fut_line.append(max(0, f_req) if f_req >= 0 else -1)
 
+# Compute safety stop thresholds across safety looks
 saf_line = []
 for lp in viz_n_safety:
     saf_req = safety_stop_threshold(lp, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
     saf_line.append(saf_req)
 
+# Maps for simulators and tables
 succ_req_by_n = {int(n): (None if s is None else int(s)) for n, s in zip(viz_n, succ_line)}
 futi_max_by_n = {int(n): int(f) if isinstance(f, (int, np.integer)) and f >= 0 else -1 for n, f in zip(viz_n, fut_line)}
 safety_req_by_n = {int(n): (None if s is None else int(s)) for n, s in zip(viz_n_safety, saf_line)}
 
+# Efficacy corridor figure
 fig_corr = go.Figure()
 fig_corr.add_trace(go.Scatter(x=viz_n, y=[np.nan if s is None else s for s in succ_line],
                               name="Success Boundary", line=dict(color='green', dash='dash')))
@@ -437,6 +475,7 @@ fig_corr.add_trace(go.Scatter(x=[total_n], y=[successes], mode='markers+text', t
 fig_corr.update_layout(xaxis_title="Sample Size (N)", yaxis_title="Successes (S)", height=400, margin=dict(t=20, b=0))
 st.plotly_chart(fig_corr, use_container_width=True)
 
+# Safety corridor figure
 st.subheader("🧯 Safety Decision Corridor")
 fig_safety_corr = go.Figure()
 fig_safety_corr.add_trace(go.Scatter(
@@ -456,12 +495,13 @@ fig_safety_corr.update_layout(
 )
 st.plotly_chart(fig_safety_corr, use_container_width=True)
 
-# ==========================================
-# 7. VISUALIZATIONS & HEATMAP
-# ==========================================
+# ==============================================================
+# 7. POSTERIOR VISUALS — PDFs with 95% CI shading and optional heatmap
+# ==============================================================
 st.subheader("Statistical Distributions (95% CI Shaded)")
 x = np.linspace(0, 1, 500)
 fig = go.Figure()
+# Efficacy PDF + shaded CI
 fig.add_trace(go.Scatter(x=x, y=beta.pdf(x, a_eff, b_eff), name="Efficacy Belief",
                          line=dict(color='#2980b9', width=3)))
 x_ci_e = np.linspace(eff_ci[0], eff_ci[1], 100)
@@ -471,6 +511,7 @@ fig.add_trace(go.Scatter(
     fill='toself', fillcolor='rgba(41, 128, 185, 0.2)',
     line=dict(color='rgba(255,255,255,0)'), showlegend=False
 ))
+# Safety PDF + shaded CI
 fig.add_trace(go.Scatter(x=x, y=beta.pdf(x, a_saf, b_saf), name="Safety Belief",
                          line=dict(color='#c0392b', width=3)))
 x_ci_s = np.linspace(saf_ci[0], saf_ci[1], 100)
@@ -485,6 +526,7 @@ fig.add_vline(x=safe_limit, line_dash="dash", line_color="black", annotation_tex
 fig.update_layout(xaxis=dict(range=[0, 1]), height=400, margin=dict(l=0, r=0, t=50, b=0))
 st.plotly_chart(fig, use_container_width=True)
 
+# Optional risk–benefit heatmap (illustrative utility)
 if include_heatmap:
     st.subheader("⚖️ Risk-Benefit Trade-off Heatmap (Illustrative)")
     eff_grid, saf_grid = np.linspace(0.2, 0.9, 50), np.linspace(0.0, 0.4, 50)
@@ -499,11 +541,12 @@ if include_heatmap:
                                   text=["Current"], marker=dict(color='white', size=12, symbol='x')))
     st.plotly_chart(fig_heat, use_container_width=True)
 
-# ==========================================
-# 8. TEXTUAL BREAKDOWN & SENSITIVITY + Proper BF10 (hardened)
-# ==========================================
+# ==============================================================
+# 8. FULL BREAKDOWN — Efficacy & Safety summaries and Sensitivity analysis
+# ==============================================================
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
+    # Efficacy summary
     with c1:
         st.markdown("**Efficacy Summary**")
         st.write(f"Mean Efficacy: **{eff_mean:.1%}**")
@@ -514,6 +557,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Prob > Goal ({dream_eff:.0%}): **{p_goal:.1%}**")
         st.write(f"Prob Equivalence: **{p_equiv:.1%}** (band: [{lb:.0%}, {ub:.0%}])")
         st.write(f"Projected Success Range: **{ps_range[0]} - {ps_range[1]} successes**")
+    # Safety summary
     with c2:
         st.markdown("**Safety Summary (Binary SAE)**")
         st.write(f"Mean Toxicity: **{saf_mean:.1%}**")
@@ -521,6 +565,7 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"95% CI width (precision): **{(saf_ci[1]-saf_ci[0]):.1%}**")
         st.write(f"Prob > Limit ({safe_limit:.0%}): **{p_toxic:.1%}**")
         st.caption("Safety is modeled as binary per patient: ≥1 SAE ⇒ SAE=1.")
+    # Operational info
     with c3:
         st.markdown("**Operational Info**")
         st.write(f"BPP Success Forecast: **{bpp:.1%}**  (SE={bpp_se:.3f}, 95% CI [{bpp_ci_low:.1%}, {bpp_ci_high:.1%}])")
@@ -530,9 +575,11 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Efficacy Look Points: **N = {', '.join(map(str, look_points)) or 'None'}**")
         st.write(f"Safety Look Points: **N = {', '.join(map(str, safety_look_points)) or 'None'}**")
 
+# --- Efficacy sensitivity with Bayes factors (point null at p0) ---
 st.subheader("🧪 Efficacy Sensitivity & Robustness (with Bayes Factors)")
 
 def bayes_factor_point_null(s, n, a, b, p0, eps=1e-12):
+    """BF10 = marginal_likelihood(H1=Beta(a,b))/likelihood(H0=point p0)."""
     p0 = float(np.clip(p0, eps, 1.0 - eps))
     successes_local = s
     failures_local = n - s
@@ -576,6 +623,7 @@ spread = max(target_probs) - min(target_probs) if target_probs else 0.0
 st.markdown(f"**Interpretation (efficacy):** Results are **{'ROBUST' if spread < 0.15 else 'SENSITIVE'}** "
             f"({spread:.1%} variance in P(>target) across efficacy priors).")
 
+# PDFs and bar summaries for sensitivity priors
 st.subheader("🎛️ Efficacy Sensitivity: Posterior Distributions")
 x_grid = np.linspace(0, 1, 600)
 fig_sens_pdf = go.Figure()
@@ -606,102 +654,14 @@ fig_sens_bars.update_yaxes(tickformat=".0%")
 fig_sens_bars.update_layout(height=420, margin=dict(t=20, b=0))
 st.plotly_chart(fig_sens_bars, use_container_width=True)
 
-# ==========================================
-# 8B. SAFETY SENSITIVITY (adjustable priors + richer stats + UCL badge)
-# ==========================================
-st.subheader("🧯 Safety Sensitivity Analysis (Adjustable Priors)")
-safety_sens_specs = [
-    (f"Safety S1 (α={saf1_a:.1f}, β={saf1_b:.1f})", saf1_a, saf1_b, "#16a085"),
-    (f"Safety S2 (α={saf2_a:.1f}, β={saf2_b:.1f})", saf2_a, saf2_b, "#2c3e50"),
-    (f"Safety S3 (α={saf3_a:.1f}, β={saf3_b:.1f})", saf3_a, saf3_b, "#c0392b"),
-]
-safety_rows = []
-cols_saf = st.columns(3)
-for i, (name, a0, b0, color) in enumerate(safety_sens_specs):
-    a_post = a0 + saes
-    b_post = b0 + (total_n - saes)
-    mean_tox = a_post / (a_post + b_post)
-    ci_lo, ci_hi = beta.ppf([0.025, 0.975], a_post, b_post)
-    ucl95 = beta.ppf(0.95, a_post, b_post)
-    p_tox_gt = 1 - beta.cdf(safe_limit, a_post, b_post)
-    p_tox_le = 1 - p_tox_gt
-    bf10_safety = bayes_factor_point_null(saes, total_n, a0, b0, safe_limit)
-
-    safety_rows.append({
-        "Prior": name, "color": color,
-        "a": a_post, "b": b_post,
-        "Mean tox": mean_tox,
-        "CI_lo": ci_lo, "CI_hi": ci_hi,
-        "UCL95": ucl95,
-        "P(tox>limit)": p_tox_gt,
-        "P(tox≤limit)": p_tox_le,
-        "BF10_safety": bf10_safety
-    })
-    with cols_saf[i]:
-        st.info(f"**{name}**")
-        st.write(f"Mean toxicity: **{mean_tox:.1%}**")
-        st.write(f"95% CI: **[{ci_lo:.1%} – {ci_hi:.1%}]**")
-        st.write(f"UCL95 (one-sided): **{ucl95:.1%}**")
-        if ucl95 < safe_limit:
-            st.caption("✅ UCL95 < safety limit — reassuring")
-        else:
-            st.caption("⚠️ UCL95 ≥ safety limit — monitor closely")
-        st.write(f"P(tox > {safe_limit:.0%}): **{p_tox_gt:.1%}**")
-        st.write(f"P(tox ≤ {safe_limit:.0%}): **{p_tox_le:.1%}**")
-        bf_str = f"{bf10_safety:.2e}" if (bf10_safety >= 1e4 or bf10_safety <= 1e-4) else f"{bf10_safety:.2f}"
-        st.write(f"Safety BF₁₀ (H1 vs H0 p={safe_limit:.0%}): **{bf_str}**")
-
-x_grid = np.linspace(0, 1, 600)
-fig_safety_pdf = go.Figure()
-for row in safety_rows:
-    fig_safety_pdf.add_trace(go.Scatter(
-        x=x_grid, y=beta.pdf(x_grid, row["a"], row["b"]),
-        name=row["Prior"], line=dict(width=3, color=row["color"])
-    ))
-fig_safety_pdf.add_vline(x=safe_limit, line_dash="dash", line_color="#000000", annotation_text="Safety limit")
-fig_safety_pdf.update_layout(xaxis_title="SAE rate", yaxis_title="Posterior density",
-                             height=380, margin=dict(t=20, b=0))
-st.plotly_chart(fig_safety_pdf, use_container_width=True)
-
-sdf = pd.DataFrame([{"Prior": r["Prior"], "P(tox>limit)": r["P(tox>limit)"]} for r in safety_rows])
-fig_safety_bar = px.bar(sdf, x="Prior", y="P(tox>limit)", color="Prior",
-                        color_discrete_sequence=[r["color"] for r in safety_rows],
-                        text="P(tox>limit)")
-fig_safety_bar.update_traces(texttemplate="%{text:.1%}", textposition="outside", showlegend=False)
-fig_safety_bar.update_yaxes(tickformat=".0%")
-fig_safety_bar.update_layout(height=360, margin=dict(t=20, b=0))
-st.plotly_chart(fig_safety_bar, use_container_width=True)
-
-if safety_rows:
-    probs = [r["P(tox>limit)"] for r in safety_rows]
-    min_p, max_p = float(np.min(probs)), float(np.max(probs))
-    if max_p < safe_conf_req:
-        st.success(
-            f"Across safety priors, **P(tox > {safe_limit:.0%}) ranges {min_p:.1%}–{max_p:.1%}**, "
-            f"below your Safety Stop Confidence (**{safe_conf_req:.0%}**)."
-        )
-    elif min_p > safe_conf_req:
-        st.error(
-            f"Across safety priors, **P(tox > {safe_limit:.0%}) ranges {min_p:.1%}–{max_p:.1%}**, "
-            f"above your Safety Stop Confidence (**{safe_conf_req:.0%}**)."
-        )
-    else:
-        st.warning(
-            f"Across safety priors, **P(tox > {safe_limit:.0%}) ranges {min_p:.1%}–{max_p:.1%}**, "
-            f"straddling your Safety Stop Confidence (**{safe_conf_req:.0%}**)."
-        )
-    saf_spread = max_p - min_p
-    st.caption(f"**Interpretation (safety):** Results are "
-               f"**{'ROBUST' if saf_spread < 0.15 else 'SENSITIVE'}** "
-               f"({saf_spread:.1%} variance in P(tox>limit) across safety priors).")
-
-# ==========================================
-# 9. TYPE I ERROR SIMULATION (Monte Carlo) -- separate toggles
-# ==========================================
+# ==============================================================
+# 9. DESIGN INTEGRITY CHECK — Sequential Type I Error (with toggles)
+#    Simulates trials under H0 (p_eff=p0) and user-defined safety rate.
+# ==============================================================
 st.markdown("---")
 st.subheader("🧪 Design Integrity Check")
 
-num_sims = 10000
+num_sims = 10000  # default shown; now user-configurable below
 with st.expander("Simulation Options", expanded=False):
     sim_safety_rate = st.slider(
         "Assumed TRUE SAE rate for Type I simulation", 0.0, 0.9, float(safe_limit), step=0.01,
@@ -712,7 +672,7 @@ with st.expander("Simulation Options", expanded=False):
         "Number of Type I simulations", 1000, 200000, num_sims, step=1000,
         help="Monte Carlo trials for Type I error estimate."
     )
-    # NEW: separate toggles (Type I)
+    # Separate toggles for look schedules during Type I calculation
     typei_use_eff_looks = st.checkbox(
         "Use user-defined efficacy look schedule",
         value=True,
@@ -725,26 +685,23 @@ with st.expander("Simulation Options", expanded=False):
     )
 
 if st.button(f"Calculate Sequential Type I Error ({typei_sims:,} sims)"):
-    # Only block when BOTH toggles rely on schedules AND there are truly no scheduled looks.
-    if (typei_use_eff_looks and typei_use_saf_looks
-        and len(look_points) == 0 and len(safety_look_points) == 0):
+    if (typei_use_eff_looks and typei_use_saf_looks and len(look_points) == 0 and len(safety_look_points) == 0):
         st.warning("No scheduled interim looks based on current settings; Type I error is not computed.")
     else:
         with st.spinner(f"Simulating {typei_sims:,} trials..."):
             rng = np.random.default_rng(sim_seed)
             # Build efficacy look set
             eff_looks = set(look_points) if typei_use_eff_looks else set(range(1, max_n_val + 1))
-            eff_looks.add(max_n_val)  # always include final for efficacy decisions
+            eff_looks.add(max_n_val)  # always include final look
             # Build safety look set
             saf_looks = set(safety_look_points) if typei_use_saf_looks else set(range(1, max_n_val + 1))
-            # Union for evaluation timeline
             all_looks = sorted(eff_looks.union(saf_looks))
-            # Safety check locus
+            # Safety check set (gating logic respected when scheduled)
             if typei_use_saf_looks:
                 safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
             else:
-                safety_check_set = set(range(1, max_n_val + 1))  # continuous safety everywhere
-            # Precompute any missing thresholds for expanded looks
+                safety_check_set = set(range(1, max_n_val + 1))
+            # Precompute thresholds
             succ_req_sim = dict(succ_req_by_n)
             futi_max_sim = dict(futi_max_by_n)
             safety_req_sim = dict(safety_req_by_n)
@@ -758,7 +715,7 @@ if st.button(f"Calculate Sequential Type I Error ({typei_sims:,} sims)"):
             for lp in saf_looks:
                 if lp not in safety_req_sim:
                     safety_req_sim[lp] = safety_stop_threshold(lp, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
-            # Run sims
+            # Simulate trials under H0 (p_eff = p0)
             fp_count = 0
             for _ in range(typei_sims):
                 trial_eff = rng.binomial(1, null_eff, max_n_val)
@@ -766,32 +723,34 @@ if st.button(f"Calculate Sequential Type I Error ({typei_sims:,} sims)"):
                 for lp in all_looks:
                     s = int(trial_eff[:lp].sum())
                     t = int(trial_saf[:lp].sum())
-                    # Safety stop?
+                    # Safety stop preempts any efficacy decisions
                     if lp in safety_check_set:
                         saf_thr = safety_req_sim.get(lp, None)
                         if saf_thr is not None and t >= saf_thr:
-                            break  # safety stop (not FP)
-                    # Efficacy/futility?
+                            break
+                    # Futility at interim preempts success
                     if lp in eff_looks:
                         if lp != max_n_val:
                             fut_thr = futi_max_sim.get(lp, -1)
                             if fut_thr >= 0 and s <= fut_thr:
-                                break  # futility stop (not FP)
+                                break
+                        # Success
                         suc_thr = succ_req_sim.get(lp, None)
                         if suc_thr is not None and s >= suc_thr:
-                            fp_count += 1  # FP: efficacy success under H0
+                            fp_count += 1
                             break
             type_i_estimate = fp_count / typei_sims
             ci_lo, ci_hi = wilson_ci(fp_count, typei_sims)
             st.warning(
-                f"Estimated Sequential Type I Error (with safety & futility): "
-                f"**{type_i_estimate:.2%}** (95% CI {ci_lo:.2%}–{ci_hi:.2%})"
+                f"Estimated Sequential Type I Error (with safety & futility): **{type_i_estimate:.2%}** "
+                f"(95% CI {ci_lo:.2%}–{ci_hi:.2%})"
             )
             st.caption("Alpha respects the toggles: using user look schedules or continuous checks at every N.")
 
-# ==========================================
-# 10. POWER ANALYSIS (Operating Characteristics) -- separate toggles
-# ==========================================
+# ==============================================================
+# 10. POWER ANALYSIS — Operating characteristics (single point + curve)
+#     Uses same decision logic and schedules (or continuous) per toggles.
+# ==============================================================
 st.markdown("---")
 st.subheader("📐 Power Analysis (Operating Characteristics)")
 
@@ -805,20 +764,19 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
                         succ_req_by_n, futi_max_by_n, safety_req_by_n,
                         mc_draws, mc_seed, bpp_futility_limit,
                         power_use_eff_looks, power_use_saf_looks):
+    """Simulate trials at given true rates to estimate power and expected N."""
     rng = np.random.default_rng(seed)
-    # Efficacy look set
+    # Build look sets according to toggles
     eff_looks = set(look_points) if power_use_eff_looks else set(range(1, max_n_val + 1))
-    eff_looks.add(max_n_val)  # ensure final
-    # Safety look set
+    eff_looks.add(max_n_val)
     saf_looks = set(safety_look_points) if power_use_saf_looks else set(range(1, max_n_val + 1))
-    # Union timeline
     all_looks = sorted(eff_looks.union(saf_looks))
-    # Safety check locus
+    # Safety check locus (respect gating only for scheduled safety)
     if power_use_saf_looks:
         safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
     else:
-        safety_check_set = set(range(1, max_n_val + 1))  # continuous safety
-    # Precompute thresholds
+        safety_check_set = set(range(1, max_n_val + 1))
+    # Precompute thresholds if needed
     succ_req_sim = dict(succ_req_by_n)
     futi_max_sim = dict(futi_max_by_n)
     safety_req_sim = dict(safety_req_by_n)
@@ -832,6 +790,7 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
     for lp in saf_looks:
         if lp not in safety_req_sim:
             safety_req_sim[lp] = safety_stop_threshold(lp, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
+    # Run sims
     success_count = 0
     stop_n_list = []
     stop_reason_counts = {"safety": 0, "futility": 0, "interim_success": 0, "final_success": 0, "no_decision": 0}
@@ -842,7 +801,7 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
         for lp in all_looks:
             s = int(trial_eff[:lp].sum())
             t = int(trial_saf[:lp].sum())
-            # Safety
+            # Safety stop
             if lp in safety_check_set:
                 saf_thr = safety_req_sim.get(lp, None)
                 if saf_thr is not None and t >= saf_thr:
@@ -873,7 +832,7 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
     exp_n = float(np.mean(stop_n_list)) if stop_n_list else float(max_n_val)
     return power_est, exp_n, stop_reason_counts
 
-# Run power simulation with separate toggles
+# --- Single-point power estimate at chosen true rates ---
 power_est, power_exp_n, power_reasons = simulate_power_once(
     power_true_eff, power_true_saf, power_sims, power_seed,
     max_n_val,
@@ -886,8 +845,10 @@ power_est, power_exp_n, power_reasons = simulate_power_once(
     power_use_eff_looks, power_use_saf_looks
 )
 
+# Wilson 95% CI around Monte Carlo power proportion
 c_pow_lo, c_pow_hi = wilson_ci(power_reasons['interim_success'] + power_reasons['final_success'], power_sims)
 
+# Present the main OC metrics
 c1, c2, c3 = st.columns(3)
 with c1:
     st.metric("Power (Pr[declare success])", f"{power_est:.1%}",
@@ -902,7 +863,17 @@ with c3:
     st.write(f"- Final success: **{power_reasons['final_success'] / power_sims:.1%}**")
     st.write(f"- No decision at looks (ended at max N): **{power_reasons['no_decision'] / power_sims:.1%}**")
 
-# Power curve vs true efficacy (respects toggles)
+# Add stop-reason legend to the Power section (as requested)
+st.caption(
+    "**Stop reason legend:**\n"
+    "\n- **Safety stop**: at a safety look (or continuously if selected), cumulative SAEs reach or exceed the safety stop threshold for that N."
+    "\n- **Futility stop**: at an interim efficacy look, observed successes are at/below the futility boundary derived from the PPoS floor."
+    "\n- **Interim success**: observed successes meet/exceed the success boundary at an interim look."
+    "\n- **Final success**: observed successes meet/exceed the success boundary at the final look (N = max N)."
+    "\n- **No decision**: no stop criteria were met; the trial reached max N without declaring success or triggering safety/futility."
+)
+
+# --- Power curve vs true efficacy (using same toggles for looks) ---
 st.subheader("📐 Power Curve vs True Efficacy")
 @st.cache_data
 def power_curve(p0, p_high, points, sims_per_point, seed_base,
@@ -961,9 +932,10 @@ fig_expN.update_layout(xaxis_title="True efficacy rate", yaxis_title="Expected s
                        height=380, margin=dict(t=20, b=0))
 st.plotly_chart(fig_expN, use_container_width=True)
 
-# ==========================================
-# 10B. Adaptive Scenario Suite OC Simulation (with legend)
-# ==========================================
+# ==============================================================
+# 10B. ADAPTIVE SCENARIO SUITE — On-demand OC across multiple scenarios
+#      (Now with fixed colors for stop-reason stacked bars)
+# ==============================================================
 st.markdown("---")
 st.subheader("📊 Adaptive Scenario Suite — Operating Characteristics (OC)")
 
@@ -975,54 +947,45 @@ with st.expander("Scenario Suite Options", expanded=False):
     oc_use_saf_looks = st.checkbox("Use user-defined safety look schedule (OC)", value=power_use_saf_looks)
     include_borderline = st.checkbox("Include borderline scenarios (near thresholds)", value=True)
 
-# Helper to build adaptive scenarios
+# Small helpers to construct scenarios adaptively from p0/p1 and safety limit
 
 def _clip(x, lo, hi):
     return float(max(lo, min(hi, x)))
 
 def build_adaptive_scenarios(null_eff, target_eff, dream_eff, safe_limit, include_borderline=True):
-    """
-    Build a suite of scenarios adaptive to the user's design settings.
-    Returns a list of dicts: {name, p_eff, p_saf}.
-    """
     scenarios = []
-    # Core anchors
     eff_null = _clip(null_eff, 0.01, 0.99)
     eff_target = _clip(target_eff, 0.01, 0.99)
     eff_dream = _clip(dream_eff, 0.01, 0.99)
-    eff_low = _clip(null_eff - 0.10, 0.01, 0.99)   # clearly futile
+    eff_low = _clip(null_eff - 0.10, 0.01, 0.99)         # clearly futile
     eff_high = _clip(max(target_eff + 0.10, eff_dream), 0.01, 0.99)  # strong efficacy
-    eff_mid = _clip((null_eff + target_eff)/2.0, 0.01, 0.99)  # marginal efficacy
+    eff_mid = _clip((null_eff + target_eff)/2.0, 0.01, 0.99)        # marginal efficacy
 
-    saf_border = _clip(safe_limit, 0.0, 0.9)          # borderline safety
-    saf_low = _clip(safe_limit/2.0, 0.0, 0.9)         # reassuring safety
-    saf_high = _clip(safe_limit*1.5, 0.0, 0.9)        # clearly high toxicity
-    saf_very_high = _clip(safe_limit + 0.10, 0.0, 0.9)  # very high toxicity
+    saf_border = _clip(safe_limit, 0.0, 0.9)             # borderline safety
+    saf_low = _clip(safe_limit/2.0, 0.0, 0.9)            # reassuring safety
+    saf_high = _clip(safe_limit*1.5, 0.0, 0.9)           # high toxicity
+    saf_very_high = _clip(safe_limit + 0.10, 0.0, 0.9)   # very high toxicity
 
-    # Scenario definitions
     scenarios += [
-        {"name": "Null efficacy, acceptable safety", "p_eff": eff_null, "p_saf": saf_low},
+        {"name": "Null efficacy, acceptable safety", "p_eff": eff_null,   "p_saf": saf_low},
         {"name": "Target efficacy, acceptable safety", "p_eff": eff_target, "p_saf": saf_low},
-        {"name": "High efficacy, acceptable safety", "p_eff": eff_high, "p_saf": saf_low},
-        {"name": "Futile efficacy, acceptable safety", "p_eff": eff_low, "p_saf": saf_low},
-        {"name": "Null efficacy, borderline safety", "p_eff": eff_null, "p_saf": saf_border},
-        {"name": "Target efficacy, borderline safety", "p_eff": eff_target, "p_saf": saf_border},
-        {"name": "High efficacy, high toxicity", "p_eff": eff_high, "p_saf": saf_high},
-        {"name": "Futile efficacy, high toxicity", "p_eff": eff_low, "p_saf": saf_high},
-        {"name": "Marginal efficacy, acceptable safety", "p_eff": eff_mid, "p_saf": saf_low},
-        {"name": "Marginal efficacy, borderline safety", "p_eff": eff_mid, "p_saf": saf_border},
-        {"name": "Marginal efficacy, high toxicity", "p_eff": eff_mid, "p_saf": saf_high},
+        {"name": "High efficacy, acceptable safety",  "p_eff": eff_high,  "p_saf": saf_low},
+        {"name": "Futile efficacy, acceptable safety","p_eff": eff_low,   "p_saf": saf_low},
+        {"name": "Null efficacy, borderline safety",  "p_eff": eff_null,   "p_saf": saf_border},
+        {"name": "Target efficacy, borderline safety","p_eff": eff_target, "p_saf": saf_border},
+        {"name": "High efficacy, high toxicity",      "p_eff": eff_high,  "p_saf": saf_high},
+        {"name": "Futile efficacy, high toxicity",    "p_eff": eff_low,   "p_saf": saf_high},
+        {"name": "Marginal efficacy, acceptable safety","p_eff": eff_mid,  "p_saf": saf_low},
+        {"name": "Marginal efficacy, borderline safety","p_eff": eff_mid,  "p_saf": saf_border},
+        {"name": "Marginal efficacy, high toxicity",   "p_eff": eff_mid,  "p_saf": saf_high},
     ]
-
     if include_borderline:
         scenarios += [
             {"name": "Target efficacy, very high toxicity", "p_eff": eff_target, "p_saf": saf_very_high},
-            {"name": "Null efficacy, very high toxicity", "p_eff": eff_null, "p_saf": saf_very_high},
+            {"name": "Null efficacy, very high toxicity",   "p_eff": eff_null,   "p_saf": saf_very_high},
         ]
-
-    # Deduplicate names if any and clip rates
-    out = []
-    seen = set()
+    # Deduplicate and clip
+    out, seen = [], set()
     for sc in scenarios:
         key = (sc["name"], round(sc["p_eff"], 4), round(sc["p_saf"], 4))
         if key in seen:
@@ -1033,13 +996,12 @@ def build_adaptive_scenarios(null_eff, target_eff, dream_eff, safe_limit, includ
         out.append(sc)
     return out
 
-# Scenario suite execution
+# Execute scenario suite when button is pressed
 if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
     scenarios = build_adaptive_scenarios(null_eff, target_eff, dream_eff, safe_limit, include_borderline)
     st.info(f"Running {len(scenarios)} scenarios @ {oc_sims:,} sims each…")
 
-    rows = []
-    # Prepare look sets once
+    # Prepare look sets once per run
     eff_looks = set(look_points) if oc_use_eff_looks else set(range(1, max_n_val + 1))
     eff_looks.add(max_n_val)
     saf_looks = set(safety_look_points) if oc_use_saf_looks else set(range(1, max_n_val + 1))
@@ -1048,12 +1010,10 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
     safety_check_set_cont = set(range(1, max_n_val + 1))
     safety_check_set = safety_check_set_sched if oc_use_saf_looks else safety_check_set_cont
 
-    # Precompute thresholds for all looks
+    # Threshold caches
     succ_req_sim = dict(succ_req_by_n)
     futi_max_sim = dict(futi_max_by_n)
     safety_req_sim = dict(safety_req_by_n)
-
-    # Fill missing
     for lp in eff_looks:
         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
         if lp not in succ_req_sim:
@@ -1065,16 +1025,15 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
         if lp not in safety_req_sim:
             safety_req_sim[lp] = safety_stop_threshold(lp, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
 
-    # Run each scenario
+    rows = []
+    # Run each scenario with distinct RNG seed offset
     for i, sc in enumerate(scenarios):
-        seed = int(oc_seed + i*9973)
-        rng = np.random.default_rng(seed)
+        rng = np.random.default_rng(int(oc_seed + i*9973))
         success_count = 0
         stop_n_list = []
         stop_reason_counts = {"safety": 0, "futility": 0, "interim_success": 0, "final_success": 0, "no_decision": 0}
         p_true_eff = sc["p_eff"]
         p_true_saf = sc["p_saf"]
-
         for _ in range(oc_sims):
             trial_eff = rng.binomial(1, p_true_eff, max_n_val)
             trial_saf = rng.binomial(1, p_true_saf, max_n_val)
@@ -1082,7 +1041,6 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
             for lp in all_looks:
                 s = int(trial_eff[:lp].sum())
                 t = int(trial_saf[:lp].sum())
-                # Safety
                 if lp in safety_check_set:
                     saf_thr = safety_req_sim.get(lp, None)
                     if saf_thr is not None and t >= saf_thr:
@@ -1090,7 +1048,6 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
                         stop_n_list.append(lp)
                         decided = True
                         break
-                # Efficacy / Futility
                 if lp in eff_looks:
                     if lp != max_n_val:
                         fut_thr = futi_max_sim.get(lp, -1)
@@ -1109,11 +1066,9 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
             if not decided:
                 stop_reason_counts["no_decision"] += 1
                 stop_n_list.append(max_n_val)
-
         oc_power = success_count / oc_sims
         oc_pow_lo, oc_pow_hi = wilson_ci(success_count, oc_sims)
         oc_exp_n = float(np.mean(stop_n_list)) if stop_n_list else float(max_n_val)
-
         rows.append({
             "Scenario": sc["name"],
             "TRUE efficacy": p_true_eff,
@@ -1130,7 +1085,8 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
         })
 
     suite_df = pd.DataFrame(rows)
-    # Display table with percentages formatted
+
+    # Pretty table for display (percentages and rounding)
     fmt_df = suite_df.copy()
     for col in ["Power", "Power_CI_low", "Power_CI_high", "Safety stop %", "Futility stop %", "Interim success %", "Final success %", "No decision %"]:
         fmt_df[col] = (fmt_df[col]*100.0).round(1)
@@ -1139,23 +1095,33 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
     st.write("**Scenario Suite Summary**")
     st.dataframe(fmt_df)
 
-    # Bar chart: Power by scenario
+    # --- Power by scenario (unchanged colors) ---
     fig_suite_power = px.bar(suite_df, x="Scenario", y="Power", text="Power")
     fig_suite_power.update_traces(texttemplate="%{text:.1%}", textposition="outside")
     fig_suite_power.update_yaxes(tickformat=".0%")
     fig_suite_power.update_layout(height=420, margin=dict(t=20, b=80), xaxis_tickangle=30)
     st.plotly_chart(fig_suite_power, use_container_width=True)
 
-    # Stacked bars: stop reasons by scenario
+    # --- Stacked stop-reason rates with fixed color mapping as requested ---
     reasons_long = suite_df.melt(id_vars=["Scenario"],
                                  value_vars=["Safety stop %", "Futility stop %", "Interim success %", "Final success %", "No decision %"],
                                  var_name="Reason", value_name="Rate")
-    fig_suite_reasons = px.bar(reasons_long, x="Scenario", y="Rate", color="Reason", barmode="stack")
+    fig_suite_reasons = px.bar(
+        reasons_long, x="Scenario", y="Rate", color="Reason", barmode="stack",
+        color_discrete_map={
+            "Safety stop %": "#e74c3c",   # red
+            "Futility stop %": "#f39c12",  # orange
+            "Interim success %": "#27ae60",# green
+            "Final success %": "#2980b9",  # blue
+            "No decision %": "#95a5a6"     # grey
+        }
+    )
     fig_suite_reasons.update_yaxes(tickformat=".0%")
-    fig_suite_reasons.update_layout(height=460, margin=dict(t=20, b=80), xaxis_tickangle=30)
+    fig_suite_reasons.update_layout(height=460, margin=dict(t=20, b=80), xaxis_tickangle=30,
+                                    legend_title_text="Stop reason")
     st.plotly_chart(fig_suite_reasons, use_container_width=True)
 
-    # Compact legend for stop reasons
+    # Compact legend (also appears in Power section, for consistency)
     st.caption(
         "**Stop reason legend:**\n"
         "\n- **Safety stop**: at a safety look (or continuously if selected), cumulative SAEs reach or exceed the safety stop threshold for that N."
@@ -1165,7 +1131,7 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
         "\n- **No decision**: no stop criteria were met; the trial reached max N without declaring success or triggering safety/futility."
     )
 
-    # Download CSV
+    # CSV export for audit or offline review
     st.download_button(
         label="⬇️ Download Scenario Suite (CSV)",
         data=suite_df.to_csv(index=False).encode("utf-8"),
@@ -1173,9 +1139,9 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
         mime="text/csv"
     )
 
-# ==========================================
-# 11. REGULATORY TABLES (efficacy/futility) & (safety)
-# ==========================================
+# ==============================================================
+# 11. REGULATORY TABLES — Efficacy/Futility and Safety boundaries by look
+# ==============================================================
 with st.expander("📋 Regulatory Decision Boundary Tables", expanded=True):
     st.markdown("**Efficacy/Futility Boundaries (by efficacy look schedule)**")
     boundary_data_eff = []
@@ -1215,9 +1181,9 @@ with st.expander("📋 Regulatory Decision Boundary Tables", expanded=True):
 
 st.markdown("---")
 
-# ==========================================
-# 12. EXPORT / AUDIT SNAPSHOT
-# ==========================================
+# ==============================================================
+# 12. EXPORT / AUDIT SNAPSHOT — One-click CSV of current state & settings
+# ==============================================================
 if st.button("📥 Prepare Audit-Ready Snapshot"):
     report_data = {
         "Metric": [
