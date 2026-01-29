@@ -7,7 +7,7 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime
 
-st.set_page_config(page_title="Universal Trial Monitor: Airtight Pro", layout="wide")
+st.set_page_config(page_title="Bayes Trial Monitor", layout="wide")
 
 # ==========================================
 # 1. SIDEBAR INPUTS (With Explanatory Tooltips)
@@ -284,7 +284,7 @@ bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
 # ==========================================
 # 4. MAIN DASHBOARD LAYOUT
 # ==========================================
-st.title("🛡️ Hybrid Antivenom Trial Monitor: Airtight Pro")
+st.title("🛡️ AVF-Single Arm Bayesian Trial Monitor")
 
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
@@ -980,3 +980,4 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
+
