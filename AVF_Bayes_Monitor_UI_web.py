@@ -127,6 +127,12 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     )
 
 # Sensitivity & Equivalence
+with st.sidebar.expander("Sensitivity Prior Settings (Legacy weights)"):
+    opt_p = st.slider("Optimistic Prior Weight (efficacy α)", 1, 10, 4,
+                      help="Legacy alpha weight for the Optimistic efficacy sensitivity.")
+    skp_p = st.slider("Skeptical Prior Weight (efficacy β)", 1, 10, 4,
+                      help="Legacy beta weight for the Skeptical efficacy sensitivity.")
+
 with st.sidebar.expander("Sensitivity Priors (Adjustable) — Efficacy", expanded=True):
     st.caption("Define three efficacy priors (α, β) for sensitivity overlays.")
     eff1_a = st.number_input("Efficacy S1 α", 0.1, 20.0, float(opt_p), 0.1)
@@ -185,6 +191,12 @@ with st.sidebar.expander("Power Analysis Settings", expanded=False):
     power_curve_sims = st.number_input(
         "Simulations per curve point", 500, 50000, 5000, step=500,
         help="Trials simulated at each efficacy grid value to draw the power curve."
+    )
+    # NEW: Toggle for using look schedules in POWER sim
+    sim_use_look_settings_power = st.checkbox(
+        "Simulate using user-defined look schedules (efficacy & safety)",
+        value=True,
+        help="If off, evaluate safety & efficacy at every N from 1..max N (continuous monitoring)."
     )
 
 # ==========================================
@@ -659,6 +671,12 @@ with st.expander("Simulation Options", expanded=False):
         help="Used to simulate SAEs while testing Type I (efficacy false positive) under p=p0."
     )
     sim_seed = st.number_input("Random seed (Type I sim)", 0, 10_000_000, 7, step=1)
+    # NEW: Toggle for using look schedules in TYPE I sim
+    sim_use_look_settings_typei = st.checkbox(
+        "Simulate using user-defined look schedules (efficacy & safety)",
+        value=True,
+        help="If off, evaluate safety & efficacy at every N from 1..max N (continuous monitoring)."
+    )
 
 if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
     if len(look_points) == 0 and len(safety_look_points) == 0:
@@ -667,14 +685,39 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
         with st.spinner(f"Simulating {num_sims:,} trials..."):
             rng = np.random.default_rng(sim_seed)
 
+            # Build look sets based on the toggle
+            if sim_use_look_settings_typei:
+                eff_looks = set(look_points)
+                eff_looks.add(max_n_val)  # always include final
+                saf_looks = set(safety_look_points)
+                all_looks = sorted(eff_looks.union(saf_looks))
+                safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
+            else:
+                eff_looks = set(range(1, max_n_val + 1))
+                saf_looks = set(range(1, max_n_val + 1))
+                all_looks = list(range(1, max_n_val + 1))
+                safety_check_set = set(all_looks)
+
+            # Precompute any missing thresholds for expanded looks (cached)
+            succ_req_sim = dict(succ_req_by_n)
+            futi_max_sim = dict(futi_max_by_n)
+            safety_req_sim = dict(safety_req_by_n)
+
+            for lp in eff_looks:
+                use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
+                if lp not in succ_req_sim:
+                    succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+                if lp != max_n_val and (lp not in futi_max_sim):
+                    futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+                                                             prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
+
+            for lp in saf_looks:
+                if lp not in safety_req_sim:
+                    safety_req_sim[lp] = next((s for s in range(lp + 1)
+                                               if (1 - beta.cdf(safe_limit, prior_alpha_saf + s, prior_beta_saf + (lp - s))) > safe_conf_req),
+                                              None)
+
             fp_count = 0  # False positives for efficacy
-            eff_looks = set(look_points)
-            saf_looks = set(safety_look_points)
-            # Always include the final look for efficacy
-            eff_looks.add(max_n_val)
-            all_looks = sorted(eff_looks.union(saf_looks))
-            # Align safety checks with gating: continuous -> check at all looks; gated -> safety looks only
-            safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
 
             for _ in range(num_sims):
                 trial_eff = rng.binomial(1, null_eff, max_n_val)
@@ -684,33 +727,28 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
                     s = int(trial_eff[:lp].sum())
                     t = int(trial_saf[:lp].sum())
 
-                    # Safety (per gating semantics)
+                    # Safety per toggle/gating
                     if lp in safety_check_set:
-                        saf_thr = safety_req_by_n.get(lp, None)
+                        saf_thr = safety_req_sim.get(lp, None)
                         if saf_thr is not None and t >= saf_thr:
                             # safety stop (not FP)
                             break
 
-                    # Efficacy/Futility (if an efficacy look)
+                    # Efficacy/Futility
                     if lp in eff_looks:
-                        # Futility only meaningful before final
                         if lp != max_n_val:
-                            fut_thr = futi_max_by_n.get(lp, -1)
+                            fut_thr = futi_max_sim.get(lp, -1)
                             if fut_thr >= 0 and s <= fut_thr:
                                 break  # futility stop (not FP)
 
-                        # Success threshold per look
-                        use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
-                        suc_thr = succ_req_by_n.get(lp, None)
-                        if suc_thr is None and lp == max_n_val:
-                            suc_thr = success_boundary(lp, prior_alpha, prior_beta, target_eff, success_conf_req_final)
+                        suc_thr = succ_req_sim.get(lp, None)
                         if suc_thr is not None and s >= suc_thr:
                             fp_count += 1  # efficacy success under H0 => false positive
                             break
 
             type_i_estimate = fp_count / num_sims
             st.warning(f"Estimated Sequential Type I Error (with safety & futility): **{type_i_estimate:.2%}**")
-            st.caption("Alpha is computed across scheduled looks. Final success uses the FINAL threshold; interim uses the INTERIM threshold.")
+            st.caption("Alpha respects the toggle: using user look schedules (default) or continuous checks at every N.")
 
 # ==========================================
 # 10. POWER ANALYSIS (Operating Characteristics)
@@ -721,26 +759,55 @@ st.subheader("📐 Power Analysis (Operating Characteristics)")
 @st.cache_data
 def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
                         max_n_val,
-                        eff_looks, saf_looks, safety_gate_to_schedule,
+                        look_points, safety_look_points, safety_gate_to_schedule,
                         prior_alpha, prior_beta, target_eff,
                         success_conf_req_interim, success_conf_req_final,
                         prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
-                        succ_req_by_n, futi_max_by_n, safety_req_by_n):
+                        succ_req_by_n, futi_max_by_n, safety_req_by_n,
+                        mc_draws, mc_seed, bpp_futility_limit,
+                        sim_use_look_settings_power):
     """
     Simulate full trials to estimate:
       - Power (probability of declaring efficacy success)
       - Expected sample size at stop
       - Stop reason proportions
     Applies rules: safety -> futility -> efficacy, with separate safety schedule and
-    interim vs final thresholds. Ensures final efficacy look at N = max_n_val.
+    interim vs final thresholds. Final efficacy look at N = max_n_val is ensured in schedule mode.
+    Toggle supports schedule mode vs continuous checks at every N.
     """
     rng = np.random.default_rng(seed)
-    eff_looks = set(eff_looks)
-    saf_looks = set(saf_looks)
-    eff_looks.add(max_n_val)  # always include final look
-    all_looks = sorted(eff_looks.union(saf_looks))
-    # Align safety checks with gating: continuous -> check at all looks; gated -> safety looks only
-    safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
+
+    # Build look sets per toggle
+    if sim_use_look_settings_power:
+        eff_looks = set(look_points)
+        eff_looks.add(max_n_val)
+        saf_looks = set(safety_look_points)
+        all_looks = sorted(eff_looks.union(saf_looks))
+        safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
+    else:
+        eff_looks = set(range(1, max_n_val + 1))
+        saf_looks = set(range(1, max_n_val + 1))
+        all_looks = list(range(1, max_n_val + 1))
+        safety_check_set = set(all_looks)
+
+    # Precompute any missing thresholds for expanded looks (cached)
+    succ_req_sim = dict(succ_req_by_n)
+    futi_max_sim = dict(futi_max_by_n)
+    safety_req_sim = dict(safety_req_by_n)
+
+    for lp in eff_looks:
+        use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
+        if lp not in succ_req_sim:
+            succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+        if lp != max_n_val and (lp not in futi_max_sim):
+            futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+                                                      prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
+
+    for lp in saf_looks:
+        if lp not in safety_req_sim:
+            safety_req_sim[lp] = next((s for s in range(lp + 1)
+                                       if (1 - beta.cdf(safe_limit, prior_alpha_saf + s, prior_beta_saf + (lp - s))) > safe_conf_req),
+                                      None)
 
     success_count = 0
     stop_n_list = []
@@ -755,32 +822,26 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
             s = int(trial_eff[:lp].sum())
             t = int(trial_saf[:lp].sum())
 
-            # Safety rule: gated or continuous (via safety_check_set)
+            # Safety per toggle/gating
             if lp in safety_check_set:
-                saf_thr = safety_req_by_n.get(lp, None)
+                saf_thr = safety_req_sim.get(lp, None)
                 if saf_thr is not None and t >= saf_thr:
                     stop_reason_counts["safety"] += 1
                     stop_n_list.append(lp)
                     decided = True
                     break
 
-            # Efficacy/Futility rules only at efficacy looks
+            # Efficacy/Futility
             if lp in eff_looks:
-                # Futility (only before final)
                 if lp != max_n_val:
-                    fut_thr = futi_max_by_n.get(lp, -1)
+                    fut_thr = futi_max_sim.get(lp, -1)
                     if fut_thr >= 0 and s <= fut_thr:
                         stop_reason_counts["futility"] += 1
                         stop_n_list.append(lp)
                         decided = True
                         break
 
-                # Success boundary (interim vs final)
-                use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
-                suc_thr = succ_req_by_n.get(lp, None)
-                if suc_thr is None:
-                    suc_thr = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
-
+                suc_thr = succ_req_sim.get(lp, None)
                 if suc_thr is not None and s >= suc_thr:
                     success_count += 1
                     stop_reason_counts["final_success" if lp == max_n_val else "interim_success"] += 1
@@ -796,7 +857,7 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
     exp_n = float(np.mean(stop_n_list)) if stop_n_list else float(max_n_val)
     return power_est, exp_n, stop_reason_counts
 
-# Run power simulation at the chosen true rates
+# Run power simulation at the chosen true rates (respect toggle)
 power_est, power_exp_n, power_reasons = simulate_power_once(
     power_true_eff, power_true_saf, power_sims, power_seed,
     max_n_val,
@@ -804,7 +865,9 @@ power_est, power_exp_n, power_reasons = simulate_power_once(
     prior_alpha, prior_beta, target_eff,
     success_conf_req_interim, success_conf_req_final,
     prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
-    succ_req_by_n, futi_max_by_n, safety_req_by_n
+    succ_req_by_n, futi_max_by_n, safety_req_by_n,
+    mc_draws, mc_seed, bpp_futility_limit,
+    sim_use_look_settings_power
 )
 
 c1, c2, c3 = st.columns(3)
@@ -829,7 +892,8 @@ def power_curve(p0, p_high, points, sims_per_point, seed_base,
                 success_conf_req_interim, success_conf_req_final,
                 prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
                 succ_req_by_n, futi_max_by_n, safety_req_by_n,
-                true_saf_rate):
+                true_saf_rate, mc_draws, mc_seed, bpp_futility_limit,
+                sim_use_look_settings_power):
     grid = np.linspace(p0, p_high, points)
     curve = []
     for i, p_eff in enumerate(grid):
@@ -840,7 +904,9 @@ def power_curve(p0, p_high, points, sims_per_point, seed_base,
             prior_alpha, prior_beta, target_eff,
             success_conf_req_interim, success_conf_req_final,
             prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
-            succ_req_by_n, futi_max_by_n, safety_req_by_n
+            succ_req_by_n, futi_max_by_n, safety_req_by_n,
+            mc_draws, mc_seed, bpp_futility_limit,
+            sim_use_look_settings_power
         )
         curve.append({"True efficacy": p_eff, "Power": pw, "Expected N": expN})
     return pd.DataFrame(curve)
@@ -852,7 +918,8 @@ power_df = power_curve(
     success_conf_req_interim, success_conf_req_final,
     prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req,
     succ_req_by_n, futi_max_by_n, safety_req_by_n,
-    power_true_saf
+    power_true_saf, mc_draws, mc_seed, bpp_futility_limit,
+    sim_use_look_settings_power
 )
 
 fig_power = go.Figure()
@@ -962,4 +1029,4 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
-
+``
