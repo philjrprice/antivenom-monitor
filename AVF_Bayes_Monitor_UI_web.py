@@ -298,6 +298,33 @@ bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
 # 4. MAIN DASHBOARD LAYOUT
 # ==========================================
 st.title("🛡️ AVF-Single Arm Bayesian Trial Monitor")
+
+# --- NEW: Design Summary panel (compact view of current design) ---
+st.subheader("🧭 Design Summary")
+ds1, ds2, ds3 = st.columns(3)
+
+with ds1:
+    st.markdown("**Efficacy (primary)**")
+    st.write(f"Null p0: **{null_eff:.0%}** | Target p1: **{target_eff:.0%}** | Goal: **{dream_eff:.0%}**")
+    st.write(f"Prior (α, β): **({prior_alpha:.1f}, {prior_beta:.1f})** → ESS **{prior_alpha+prior_beta:.1f}**")
+    st.write(f"Schedule: start at **N={min_interim}**, then **every {check_cohort}**")
+
+with ds2:
+    st.markdown("**Safety (binary SAE)**")
+    st.write(f"Safety limit: **{safe_limit:.0%}** | Stop confidence: **{safe_conf_req:.0%}**")
+    st.write(f"Prior (α, β): **({prior_alpha_saf:.1f}, {prior_beta_saf:.1f})** → ESS **{prior_alpha_saf+prior_beta_saf:.1f}**")
+    st.write(f"Schedule: start at **N={safety_min_interim}**, then **every {safety_check_cohort}**")
+    st.write(f"Gating to schedule: **{'ON' if safety_gate_to_schedule else 'OFF'}**")
+
+with ds3:
+    st.markdown("**Decision & Simulation settings**")
+    st.write(f"Interim success threshold: **{success_conf_req_interim:.0%}**")
+    st.write(f"Final success threshold: **{success_conf_req_final:.0%}**")
+    st.write(f"Futility floor (PPoS): **{bpp_futility_limit:.0%}**")
+    st.write(f"PPoS draws: **{mc_draws:,}** | seed: **{mc_seed}**")
+    st.write(f"Power toggles → Eff: **{'Scheduled' if power_use_eff_looks else 'Continuous'}**, "
+             f"Safety: **{'Scheduled' if power_use_saf_looks else 'Continuous'}**")
+
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Sample N", f"{total_n}/{max_n_val}")
 m2.metric("Mean Efficacy", f"{eff_mean:.1%}")
@@ -928,6 +955,143 @@ fig_expN.add_trace(go.Scatter(
 fig_expN.update_layout(xaxis_title="True efficacy rate", yaxis_title="Expected sample size at stop",
                        height=380, margin=dict(t=20, b=0))
 st.plotly_chart(fig_expN, use_container_width=True)
+
+# ==========================================
+# 10B. NEW: On-demand OC Simulation (button-triggered)
+# ==========================================
+st.markdown("---")
+st.subheader("📊 On-demand Operating Characteristics (OC) Simulation")
+
+with st.expander("OC Simulation Options", expanded=False):
+    oc_true_eff = st.slider("TRUE efficacy for OC", 0.01, 0.99, float(power_true_eff), step=0.01)
+    oc_true_saf = st.slider("TRUE SAE rate for OC", 0.0, 0.9, float(power_true_saf), step=0.01)
+    oc_sims = st.number_input("Number of OC simulations", 1000, 200000, max(20000, power_sims), step=1000)
+    oc_seed = st.number_input("Random seed (OC)", 0, 10_000_000, max(123, power_seed), step=1)
+    oc_use_eff_looks = st.checkbox("Use user-defined efficacy look schedule (OC)", value=power_use_eff_looks)
+    oc_use_saf_looks = st.checkbox("Use user-defined safety look schedule (OC)", value=power_use_saf_looks)
+
+if st.button(f"▶️ Run OC Simulation ({oc_sims:,} sims)"):
+    with st.spinner(f"Simulating {oc_sims:,} trials..."):
+        rng = np.random.default_rng(oc_seed)
+
+        # Build look sets same as simulate_power_once
+        eff_looks = set(look_points) if oc_use_eff_looks else set(range(1, max_n_val + 1))
+        eff_looks.add(max_n_val)
+        saf_looks = set(safety_look_points) if oc_use_saf_looks else set(range(1, max_n_val + 1))
+        all_looks = sorted(eff_looks.union(saf_looks))
+        safety_check_set = saf_looks if (oc_use_saf_looks and safety_gate_to_schedule) else set(all_looks) if oc_use_saf_looks else set(range(1, max_n_val + 1))
+
+        # Precompute thresholds
+        succ_req_sim = dict(succ_req_by_n)
+        futi_max_sim = dict(futi_max_by_n)
+        safety_req_sim = dict(safety_req_by_n)
+
+        for lp in eff_looks:
+            use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
+            if lp not in succ_req_sim:
+                succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+            if lp != max_n_val and (lp not in futi_max_sim):
+                futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+                                                          prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
+        for lp in saf_looks:
+            if lp not in safety_req_sim:
+                safety_req_sim[lp] = safety_stop_threshold(lp, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
+
+        success_count = 0
+        stop_reason_counts = {"safety": 0, "futility": 0, "interim_success": 0, "final_success": 0, "no_decision": 0}
+        stop_n_list = []
+
+        for _ in range(oc_sims):
+            trial_eff = rng.binomial(1, oc_true_eff, max_n_val)
+            trial_saf = rng.binomial(1, oc_true_saf, max_n_val)
+
+            decided = False
+            for lp in all_looks:
+                s = int(trial_eff[:lp].sum())
+                t = int(trial_saf[:lp].sum())
+
+                # Safety
+                if lp in safety_check_set:
+                    saf_thr = safety_req_sim.get(lp, None)
+                    if saf_thr is not None and t >= saf_thr:
+                        stop_reason_counts["safety"] += 1
+                        stop_n_list.append(lp)
+                        decided = True
+                        break
+
+                # Efficacy / futility
+                if lp in eff_looks:
+                    if lp != max_n_val:
+                        fut_thr = futi_max_sim.get(lp, -1)
+                        if fut_thr >= 0 and s <= fut_thr:
+                            stop_reason_counts["futility"] += 1
+                            stop_n_list.append(lp)
+                            decided = True
+                            break
+
+                    suc_thr = succ_req_sim.get(lp, None)
+                    if suc_thr is not None and s >= suc_thr:
+                        success_count += 1
+                        stop_reason_counts["final_success" if lp == max_n_val else "interim_success"] += 1
+                        stop_n_list.append(lp)
+                        decided = True
+                        break
+
+            if not decided:
+                stop_reason_counts["no_decision"] += 1
+                stop_n_list.append(max_n_val)
+
+        oc_power = success_count / oc_sims
+        oc_pow_lo, oc_pow_hi = wilson_ci(success_count, oc_sims)
+        oc_exp_n = float(np.mean(stop_n_list)) if stop_n_list else float(max_n_val)
+
+        cA, cB = st.columns(2)
+        with cA:
+            st.metric("OC Power", f"{oc_power:.1%}", help=f"Wilson 95% CI {oc_pow_lo:.1%}–{oc_pow_hi:.1%}")
+            st.metric("OC Expected N", f"{oc_exp_n:.1f}")
+        with cB:
+            st.markdown("**OC Stop reasons**")
+            st.write(f"- Safety stop: **{stop_reason_counts['safety'] / oc_sims:.1%}** ({stop_reason_counts['safety']:,})")
+            st.write(f"- Futility stop: **{stop_reason_counts['futility'] / oc_sims:.1%}** ({stop_reason_counts['futility']:,})")
+            st.write(f"- Interim success: **{stop_reason_counts['interim_success'] / oc_sims:.1%}** ({stop_reason_counts['interim_success']:,})")
+            st.write(f"- Final success: **{stop_reason_counts['final_success'] / oc_sims:.1%}** ({stop_reason_counts['final_success']:,})")
+            st.write(f"- No decision at looks: **{stop_reason_counts['no_decision'] / oc_sims:.1%}** ({stop_reason_counts['no_decision']:,})")
+
+        # Optional: small histogram of stop N (kept light for speed)
+        try:
+            import plotly.figure_factory as ff
+            hist_fig = px.histogram(pd.DataFrame({"Stop N": stop_n_list}), x="Stop N",
+                                    nbins=min(30, max_n_val), title="Distribution of Stop N (OC)")
+            hist_fig.update_layout(height=320, margin=dict(t=40, b=10))
+            st.plotly_chart(hist_fig, use_container_width=True)
+        except Exception:
+            pass
+
+        # Download summary
+        oc_summary = pd.DataFrame([{
+            "TRUE_eff": oc_true_eff,
+            "TRUE_saf": oc_true_saf,
+            "OC_power": oc_power,
+            "OC_power_CI_low": oc_pow_lo,
+            "OC_power_CI_high": oc_pow_hi,
+            "OC_expected_N": oc_exp_n,
+            "safety_stop_rate": stop_reason_counts['safety'] / oc_sims,
+            "futility_stop_rate": stop_reason_counts['futility'] / oc_sims,
+            "interim_success_rate": stop_reason_counts['interim_success'] / oc_sims,
+            "final_success_rate": stop_reason_counts['final_success'] / oc_sims,
+            "no_decision_rate": stop_reason_counts['no_decision'] / oc_sims,
+            "eff_looks_mode": "scheduled" if oc_use_eff_looks else "continuous",
+            "saf_looks_mode": "scheduled" if oc_use_saf_looks else "continuous",
+            "safety_gating_applied": bool(oc_use_saf_looks and safety_gate_to_schedule),
+            "sim_seed": oc_seed,
+            "sims": oc_sims
+        }])
+        st.download_button(
+            label="⬇️ Download OC summary (CSV)",
+            data=oc_summary.to_csv(index=False).encode("utf-8"),
+            file_name=f"OC_summary_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
 
 # ==========================================
 # 11. REGULATORY TABLES (efficacy/futility) & (safety)
