@@ -708,6 +708,10 @@ with st.expander("Simulation Options", expanded=False):
         help="Used to simulate SAEs while testing Type I (efficacy false positive) under p=p0."
     )
     sim_seed = st.number_input("Random seed (Type I sim)", 0, 10_000_000, 7, step=1)
+    typei_sims = st.number_input(
+        "Number of Type I simulations", 1000, 200000, num_sims, step=1000,
+        help="Monte Carlo trials for Type I error estimate."
+    )
     # NEW: separate toggles (Type I)
     typei_use_eff_looks = st.checkbox(
         "Use user-defined efficacy look schedule",
@@ -720,13 +724,13 @@ with st.expander("Simulation Options", expanded=False):
         help="If unchecked, evaluate safety at every N from 1..max N (continuous; safety gating ignored)."
     )
 
-if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
+if st.button(f"Calculate Sequential Type I Error ({typei_sims:,} sims)"):
     # Only block when BOTH toggles rely on schedules AND there are truly no scheduled looks.
     if (typei_use_eff_looks and typei_use_saf_looks
         and len(look_points) == 0 and len(safety_look_points) == 0):
         st.warning("No scheduled interim looks based on current settings; Type I error is not computed.")
     else:
-        with st.spinner(f"Simulating {num_sims:,} trials..."):
+        with st.spinner(f"Simulating {typei_sims:,} trials..."):
             rng = np.random.default_rng(sim_seed)
             # Build efficacy look set
             eff_looks = set(look_points) if typei_use_eff_looks else set(range(1, max_n_val + 1))
@@ -756,7 +760,7 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
                     safety_req_sim[lp] = safety_stop_threshold(lp, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
             # Run sims
             fp_count = 0
-            for _ in range(num_sims):
+            for _ in range(typei_sims):
                 trial_eff = rng.binomial(1, null_eff, max_n_val)
                 trial_saf = rng.binomial(1, sim_safety_rate, max_n_val)
                 for lp in all_looks:
@@ -777,8 +781,8 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
                         if suc_thr is not None and s >= suc_thr:
                             fp_count += 1  # FP: efficacy success under H0
                             break
-            type_i_estimate = fp_count / num_sims
-            ci_lo, ci_hi = wilson_ci(fp_count, num_sims)
+            type_i_estimate = fp_count / typei_sims
+            ci_lo, ci_hi = wilson_ci(fp_count, typei_sims)
             st.warning(
                 f"Estimated Sequential Type I Error (with safety & futility): "
                 f"**{type_i_estimate:.2%}** (95% CI {ci_lo:.2%}–{ci_hi:.2%})"
@@ -958,7 +962,7 @@ fig_expN.update_layout(xaxis_title="True efficacy rate", yaxis_title="Expected s
 st.plotly_chart(fig_expN, use_container_width=True)
 
 # ==========================================
-# 10B. Adaptive Scenario Suite OC Simulation
+# 10B. Adaptive Scenario Suite OC Simulation (with legend)
 # ==========================================
 st.markdown("---")
 st.subheader("📊 Adaptive Scenario Suite — Operating Characteristics (OC)")
@@ -1150,6 +1154,16 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
     fig_suite_reasons.update_yaxes(tickformat=".0%")
     fig_suite_reasons.update_layout(height=460, margin=dict(t=20, b=80), xaxis_tickangle=30)
     st.plotly_chart(fig_suite_reasons, use_container_width=True)
+
+    # Compact legend for stop reasons
+    st.caption(
+        "**Stop reason legend:**\n"
+        "\n- **Safety stop**: at a safety look (or continuously if selected), cumulative SAEs reach or exceed the safety stop threshold for that N."
+        "\n- **Futility stop**: at an interim efficacy look, observed successes are at/below the futility boundary derived from the PPoS floor."
+        "\n- **Interim success**: observed successes meet/exceed the success boundary at an interim look."
+        "\n- **Final success**: observed successes meet/exceed the success boundary at the final look (N = max N)."
+        "\n- **No decision**: no stop criteria were met; the trial reached max N without declaring success or triggering safety/futility."
+    )
 
     # Download CSV
     st.download_button(
