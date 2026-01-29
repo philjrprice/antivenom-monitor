@@ -277,12 +277,12 @@ def futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_final, prior_
 def wilson_ci(k, n, alpha=0.05):
     """
     Wilson score interval for a binomial proportion k/n (two-sided 95% by default).
-    Returns (lower, upper).
+    Returns (lower, upper). Robust near 0 and 1.
     """
     if n == 0:
         return (0.0, 1.0)
     from math import sqrt
-    z = 1.959963984540054  # 97.5% quantile for a two-sided 95% CI
+    z = 1.959963984540054  # ~ 97.5% quantile for a two-sided 95% CI
     p = k / n
     denom = 1.0 + (z*z)/n
     center = (p + (z*z)/(2*n)) / denom
@@ -357,8 +357,7 @@ else:
         pass
     # --- Predictive Pr[safety stop at next safety look] ---
     try:
-        if len([safety_min_interim + (i * safety_check_cohort)
-               for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]) > 0 and next_safety > total_n:
+        if next_safety > total_n:
             saf_thr_next = safety_stop_threshold(next_safety, prior_alpha_saf, prior_beta_saf, safe_limit, safe_conf_req)
             if saf_thr_next is not None:
                 rem_to_next = next_safety - total_n
@@ -378,6 +377,7 @@ else:
 st.subheader("📈 Trial Decision Corridors")
 look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
 viz_n = np.array(look_points)
+
 safety_look_points = [safety_min_interim + (i * safety_check_cohort)
  for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]
 viz_n_safety = np.array(safety_look_points)
