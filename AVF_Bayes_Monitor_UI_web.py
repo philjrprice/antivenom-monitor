@@ -168,7 +168,7 @@ with st.sidebar.expander("Forecasting Controls (PPoS)", expanded=True):
         help="Controls reproducibility of PPoS simulations."
     )
 
-# --- NEW: Power analysis settings
+# --- Power analysis settings
 with st.sidebar.expander("Power Analysis Settings", expanded=False):
     power_true_eff = st.slider(
         "Assumed TRUE efficacy rate for power", 0.05, 0.95, float(target_eff), step=0.01,
@@ -442,7 +442,7 @@ if include_heatmap:
     st.plotly_chart(fig_heat, use_container_width=True)
 
 # ==========================================
-# 8. TEXTUAL BREAKDOWN & SENSITIVITY + Proper BF10
+# 8. TEXTUAL BREAKDOWN & SENSITIVITY + Proper BF10 (hardened)
 # ==========================================
 with st.expander("📊 Full Statistical Breakdown", expanded=True):
     c1, c2, c3 = st.columns(3)
@@ -471,13 +471,14 @@ with st.expander("📊 Full Statistical Breakdown", expanded=True):
         st.write(f"Safety Look Points: **N = {', '.join(map(str, safety_look_points)) or 'None'}**")
 
 st.subheader("🧪 Efficacy Sensitivity & Robustness (with Bayes Factors)")
-def bayes_factor_point_null(s, n, a, b, p0):
+def bayes_factor_point_null(s, n, a, b, p0, eps=1e-12):
     """
     Proper Bayes Factor BF10 comparing:
       H1: p ~ Beta(a, b)  vs  H0: p = p0
-    Using marginal likelihoods (combinatorial factors cancel).
+    Clips p0 to (eps, 1-eps) to avoid log(0) at boundaries.
     BF10 = [B(a+s, b+n-s) / B(a, b)] / [p0^s * (1-p0)^(n-s)]
     """
+    p0 = float(np.clip(p0, eps, 1.0 - eps))
     successes_local = s
     failures_local = n - s
     log_m1 = betaln(a + successes_local, b + failures_local) - betaln(a, b)
@@ -558,7 +559,7 @@ fig_sens_bars.update_layout(height=420, margin=dict(t=20, b=0))
 st.plotly_chart(fig_sens_bars, use_container_width=True)
 
 # ==========================================
-# 8B. NEW — SAFETY SENSITIVITY (adjustable priors + richer stats)
+# 8B. SAFETY SENSITIVITY (adjustable priors + richer stats + UCL badge)
 # ==========================================
 st.subheader("🧯 Safety Sensitivity Analysis (Adjustable Priors)")
 
@@ -579,7 +580,7 @@ for i, (name, a0, b0, color) in enumerate(safety_sens_specs):
     ucl95 = beta.ppf(0.95, a_post, b_post)
     p_tox_gt = 1 - beta.cdf(safe_limit, a_post, b_post)
     p_tox_le = 1 - p_tox_gt
-    # Safety Bayes factor vs point-null at the safety limit
+    # Safety Bayes factor vs point-null at the safety limit (hardened BF with clipping)
     bf10_safety = bayes_factor_point_null(saes, total_n, a0, b0, safe_limit)
 
     safety_rows.append({
@@ -597,6 +598,11 @@ for i, (name, a0, b0, color) in enumerate(safety_sens_specs):
         st.write(f"Mean toxicity: **{mean_tox:.1%}**")
         st.write(f"95% CI: **[{ci_lo:.1%} – {ci_hi:.1%}]**")
         st.write(f"UCL95 (one-sided): **{ucl95:.1%}**")
+        # Micro-badge comparing UCL95 to safety limit (quick reassurance cue)
+        if ucl95 < safe_limit:
+            st.caption("✅ UCL95 < safety limit — reassuring")
+        else:
+            st.caption("⚠️ UCL95 ≥ safety limit — monitor closely")
         st.write(f"P(tox > {safe_limit:.0%}): **{p_tox_gt:.1%}**")
         st.write(f"P(tox ≤ {safe_limit:.0%}): **{p_tox_le:.1%}**")
         bf_str = f"{bf10_safety:.2e}" if (bf10_safety >= 1e4 or bf10_safety <= 1e-4) else f"{bf10_safety:.2f}"
@@ -673,6 +679,8 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
             # Always include the final look for efficacy
             eff_looks.add(max_n_val)
             all_looks = sorted(eff_looks.union(saf_looks))
+            # Align safety checks with gating: continuous -> check at all looks; gated -> safety looks only
+            safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
 
             for _ in range(num_sims):
                 trial_eff = rng.binomial(1, null_eff, max_n_val)
@@ -682,8 +690,8 @@ if st.button(f"Calculate Sequential Type I Error ({num_sims:,} sims)"):
                     s = int(trial_eff[:lp].sum())
                     t = int(trial_saf[:lp].sum())
 
-                    # Safety (if a safety look)
-                    if lp in saf_looks:
+                    # Safety (per gating semantics)
+                    if lp in safety_check_set:
                         saf_thr = safety_req_by_n.get(lp, None)
                         if saf_thr is not None and t >= saf_thr:
                             # safety stop (not FP)
@@ -737,6 +745,8 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
     saf_looks = set(saf_looks)
     eff_looks.add(max_n_val)  # always include final look
     all_looks = sorted(eff_looks.union(saf_looks))
+    # Align safety checks with gating: continuous -> check at all looks; gated -> safety looks only
+    safety_check_set = saf_looks if safety_gate_to_schedule else set(all_looks)
 
     success_count = 0
     stop_n_list = []
@@ -751,9 +761,8 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
             s = int(trial_eff[:lp].sum())
             t = int(trial_saf[:lp].sum())
 
-            # Safety rule: gated or continuous
-            apply_safety = (lp in saf_looks) if safety_gate_to_schedule else True
-            if apply_safety:
+            # Safety rule: gated or continuous (via safety_check_set)
+            if lp in safety_check_set:
                 saf_thr = safety_req_by_n.get(lp, None)
                 if saf_thr is not None and t >= saf_thr:
                     stop_reason_counts["safety"] += 1
@@ -959,4 +968,3 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
-
