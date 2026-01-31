@@ -392,12 +392,17 @@ def safety_stop_threshold(lp: int, prior_alpha_saf: float, prior_beta_saf: float
 
 @st.cache_data
 def futility_boundary_ppos(lp, max_n_val, null_eff, success_conf_final,
-                           prior_alpha, prior_beta, draws, seed, futility_floor):
-    """Largest S at look size lp where PPoS(final) <= futility_floor. Monotone-corrected."""
+ prior_alpha, prior_beta, draws, seed, futility_floor):
+    \"\"\"Largest S at look size lp where PPoS(final) <= futility_floor. Monotone-corrected.\"\"\"
     ppos_by_S = np.empty(lp + 1, dtype=float)
     for s in range(lp + 1):
-        ppos_by_S[s] = get_enhanced_forecasts(s, lp, max_n_val, target_eff, success_conf_final,
-                                              prior_alpha, prior_beta, draws, seed)[0]
+        # Use null_eff as the efficacy cut-off for PPoS, aligning futility with p0
+        ppos_by_S[s] = get_enhanced_forecasts(s, lp, max_n_val, null_eff, success_conf_final,
+                               prior_alpha, prior_beta, draws, seed)[0]
+    # Enforce monotonicity (non-decreasing in S)
+    ppos_monotone = np.maximum.accumulate(ppos_by_S)
+    idx = np.where(ppos_monotone <= futility_floor)[0]
+    return int(idx[-1]) if idx.size > 0 else -1
     # Enforce monotonicity (non-decreasing in S)
     ppos_monotone = np.maximum.accumulate(ppos_by_S)
     idx = np.where(ppos_monotone <= futility_floor)[0]
