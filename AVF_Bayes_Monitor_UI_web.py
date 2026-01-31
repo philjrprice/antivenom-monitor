@@ -32,6 +32,60 @@ from datetime import datetime
 # Wide layout improves horizontal space for multi-column metrics and charts
 st.set_page_config(page_title="Bayes Trial Monitor", layout="wide")
 
+# ============== Build look schedules (module-level helper) ==============
+
+def build_looks(max_n_val, first_look_n, mode, value, is_pct_list=False):
+    """Return a sorted list of N at which to perform looks. Always includes first_look_n and max_n_val."""
+    looks = set()
+    try:
+        looks.add(int(first_look_n))
+        looks.add(int(max_n_val))
+    except Exception:
+        return []
+
+    try:
+        if mode == "Every N":
+            step = max(1, int(value)) if value is not None else 1
+            n = max(int(first_look_n), 1)
+            while n < int(max_n_val):
+                n += step
+                if n <= int(max_n_val):
+                    looks.add(int(n))
+
+        elif mode == "Number of looks (equal spacing)":
+            k = max(2, int(value)) if value is not None else 2
+            span = int(max_n_val) - int(first_look_n)
+            if k > 2 and span > 0:
+                for i in range(1, k-1):
+                    n = int(first_look_n) + round(i*span/(k-1))
+                    looks.add(int(n))
+
+        elif mode == "Custom % of remaining" or is_pct_list:
+            seq = []
+            if isinstance(value, str):
+                for tok in value.split(','):
+                    tok = tok.strip()
+                    if tok:
+                        try:
+                            seq.append(float(tok))
+                        except Exception:
+                            pass
+            current = int(first_look_n)
+            while seq and current < int(max_n_val):
+                pct = max(0.0, min(100.0, seq.pop(0)))
+                remaining = max(0, int(max_n_val) - current)
+                step = int(round((pct/100.0)*remaining))
+                nxt = current + max(1, step)
+                if nxt <= int(max_n_val):
+                    looks.add(int(nxt))
+                    current = nxt
+                else:
+                    break
+    except Exception:
+        pass
+
+    return sorted(n for n in looks if 1 <= n <= int(max_n_val))
+
 # ==============================================================
 # 1. SIDEBAR INPUTS — Trial data, Priors, Schedules, and Controls
 #    These widgets define the trial design and the current observed data.
@@ -365,56 +419,8 @@ def wilson_ci(k, n, alpha=0.05):
 bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
     successes, total_n, max_n_val, target_eff, success_conf_req_final, prior_alpha, prior_beta, mc_draws, mc_seed
 
-# ============== Build look schedules now (helper + construction) ==============
 
-def build_looks(max_n_val: int, first_look_n: int, mode: str, value, is_pct_list: bool = False):
-    # Returns sorted list of N values at which to perform looks.
-    # Always includes first_look_n and max_n_val.
-    looks = set()
-    looks.add(int(first_look_n))
-    looks.add(int(max_n_val))
-
-    if mode == "Every N":
-        step = max(1, int(value)) if value is not None else 1
-        n = max(int(first_look_n), 1)
-        while n < int(max_n_val):
-            n += step
-            if n <= int(max_n_val):
-                looks.add(int(n))
-
-    elif mode == "Number of looks (equal spacing)":
-        k = max(2, int(value)) if value is not None else 2
-        span = int(max_n_val) - int(first_look_n)
-        if k > 2 and span > 0:
-            for i in range(1, k-1):
-                n = int(first_look_n) + round(i*span/(k-1))
-                looks.add(int(n))
-
-    elif mode == "Custom % of remaining" or is_pct_list:
-        seq = []
-        if isinstance(value, str):
-            for tok in value.split(','):
-                tok = tok.strip()
-                if tok:
-                    try:
-                        seq.append(float(tok))
-                    except ValueError:
-                        pass
-        current = int(first_look_n)
-        while seq and current < int(max_n_val):
-            pct = max(0.0, min(100.0, seq.pop(0)))
-            remaining = max(0, int(max_n_val) - current)
-            step = int(round((pct/100.0)*remaining))
-            nxt = current + max(1, step)
-            if nxt <= int(max_n_val):
-                looks.add(int(nxt))
-                current = nxt
-            else:
-                break
-
-    return sorted(n for n in looks if 1 <= n <= int(max_n_val))
-
-# Build schedules (available globally before any rule logic uses them)
+# Build efficacy and safety look schedules and sets
 look_points = build_looks(
     max_n_val, min_interim, eff_schedule_mode, eff_value,
     is_pct_list=(eff_schedule_mode == "Custom % of remaining")
@@ -1388,7 +1394,6 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
-
 
 
 
