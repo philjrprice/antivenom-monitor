@@ -364,6 +364,71 @@ def wilson_ci(k, n, alpha=0.05):
 # --- Run forecasting for current state (uses FINAL success threshold) ---
 bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
     successes, total_n, max_n_val, target_eff, success_conf_req_final, prior_alpha, prior_beta, mc_draws, mc_seed
+
+# ============== Build look schedules now (helper + construction) ==============
+
+def build_looks(max_n_val: int,
+                first_look_n: int,
+                mode: str,
+                value,
+                is_pct_list: bool = False):
+    # Returns sorted list of N values at which to perform looks.
+    # Always includes first_look_n and max_n_val.
+    looks = set()
+    looks.add(int(first_look_n))
+    looks.add(int(max_n_val))
+
+    if mode == "Every N":
+        step = max(1, int(value)) if value is not None else 1
+        n = max(int(first_look_n), 1)
+        while n < int(max_n_val):
+            n += step
+            if n <= int(max_n_val):
+                looks.add(int(n))
+
+    elif mode == "Number of looks (equal spacing)":
+        k = max(2, int(value)) if value is not None else 2
+        span = int(max_n_val) - int(first_look_n)
+        if k > 2 and span > 0:
+            for i in range(1, k-1):
+                n = int(first_look_n) + round(i*span/(k-1))
+                looks.add(int(n))
+
+    elif mode == "Custom % of remaining" or is_pct_list:
+        seq = []
+        if isinstance(value, str):
+            for tok in value.split(','):
+                tok = tok.strip()
+                if tok:
+                    try:
+                        seq.append(float(tok))
+                    except ValueError:
+                        pass
+        current = int(first_look_n)
+        while seq and current < int(max_n_val):
+            pct = max(0.0, min(100.0, seq.pop(0)))
+            remaining = max(0, int(max_n_val) - current)
+            step = int(round((pct/100.0)*remaining))
+            nxt = current + max(1, step)
+            if nxt <= int(max_n_val):
+                looks.add(int(nxt))
+                current = nxt
+            else:
+                break
+
+    return sorted(n for n in looks if 1 <= n <= int(max_n_val))
+
+# Build schedules (available globally before any rule logic uses them)
+look_points = build_looks(
+    max_n_val, min_interim, eff_schedule_mode, eff_value,
+    is_pct_list=(eff_schedule_mode == "Custom % of remaining")
+)
+safety_look_points = build_looks(
+    max_n_val, safety_min_interim, safety_schedule_mode, safety_value,
+    is_pct_list=(safety_schedule_mode == "Custom % of remaining")
+)
+look_set = set(look_points)
+safety_look_set = set(safety_look_points)
 )
 
 # ==============================================================
@@ -420,10 +485,10 @@ st.caption(
 st.markdown("---")
 
 # --- Governing Rules (safety → futility → success; final uses final threshold) ---
-is_efficacy_look = (total_n >= min_interim) and (((total_n - min_interim) % check_cohort) == 0)
-is_safety_look = (total_n >= safety_min_interim) and (((total_n - safety_min_interim) % safety_check_cohort) == 0)
+is_efficacy_look = (total_n in look_set)
+is_safety_look   = (total_n in safety_look_set)
 apply_safety_now = (not safety_gate_to_schedule) or is_safety_look
-is_final_look = (total_n == max_n_val)
+is_final_look    = (total_n == max_n_val)
 eff_success_threshold_now = success_conf_req_final if is_final_look else success_conf_req_interim
 
 if apply_safety_now and (p_toxic > safe_conf_req):
