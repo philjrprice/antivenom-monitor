@@ -431,7 +431,6 @@ safety_look_points = build_looks(
 )
 look_set = set(look_points)
 safety_look_set = set(safety_look_points)
-)
 
 # ==============================================================
 # 5. MAIN DASHBOARD — Title, Design Summary, KPIs, and Governing Rules
@@ -1394,6 +1393,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
+
 
 
 
