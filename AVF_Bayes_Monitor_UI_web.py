@@ -394,7 +394,7 @@ with ds2:
     f'run-in N={safety_min_interim}, then % remaining sequence [{safety_value}] to N={max_n_val}'
 )
 st.write(f'Schedule: {sch_text_saf}')
-    st.write(f"Gating to schedule: **{'ON' if safety_gate_to_schedule else 'OFF'}**")
+st.write(f"Gating to schedule: **{'ON' if safety_gate_to_schedule else 'OFF'}**")
 with ds3:
     st.markdown("**Decision & Simulation settings**")
     st.write(f"Interim success threshold: **{success_conf_req_interim:.0%}**")
@@ -1327,5 +1327,6 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
+
 
 
