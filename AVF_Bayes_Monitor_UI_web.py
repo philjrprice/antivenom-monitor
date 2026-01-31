@@ -96,8 +96,8 @@ with st.sidebar.expander("Adaptive Timing & Look Points (Efficacy/Futility)", ex
     eff_value = None
     if eff_schedule_mode == "Every N":
         eff_value = st.number_input(
-        \"Every N patients\", 1, max(20, max_n_val, key='eff_every_n'), 5,
-            help="Check after every N patients following the run-in."
+ "Every N patients", 1, max(20, max_n_val), 5, key='eff_every_n',
+ help="Check after every N patients following the run-in."
         )
     elif eff_schedule_mode == "Number of looks (equal spacing)":
         eff_value = st.number_input(
@@ -169,8 +169,8 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     safety_value = None
     if safety_schedule_mode == "Every N":
         safety_value = st.number_input(
-        \"Every N patients\", 1, max(20, max_n_val, key='saf_every_n'), 5,
-            help="Check after every N patients following the run-in."
+ "Every N patients", 1, max(20, max_n_val), 5, key='saf_every_n',
+ help="Check after every N patients following the run-in."
         )
     elif safety_schedule_mode == "Number of looks (equal spacing)":
         safety_value = st.number_input(
