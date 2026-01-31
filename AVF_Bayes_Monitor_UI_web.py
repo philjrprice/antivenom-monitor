@@ -106,9 +106,9 @@ with st.sidebar.expander("Adaptive Timing & Look Points (Efficacy/Futility)", ex
         )
     else:  # Custom % of remaining
         eff_value = st.text_input(
-        \"Custom % of remaining (comma-separated)\", "20,20,20,40",
-            help="Enter percentages like 20,20,20,40. Each value schedules the next look after that % of remaining to max N."
-        , key='eff_pctseq')
+    "Custom % of remaining (comma-separated)", "20,20,20,40", key='eff_pctseq',
+    help="Enter percentages like 20,20,20,40. Each value schedules the next look after that % of remaining to max N."
+)
 
 with st.sidebar.expander("Success & Futility Rules"):
 
@@ -179,9 +179,9 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
         )
     else:
         safety_value = st.text_input(
-        \"Custom % of remaining (comma-separated)\", "20,20,20,40",
-            help="Enter percentages like 20,20,20,40. Each value schedules the next look after that % of remaining to max N."
-        , key='saf_pctseq')
+    "Custom % of remaining (comma-separated)", "20,20,20,40", key='saf_pctseq',
+    help="Enter percentages like 20,20,20,40. Each value schedules the next look after that % of remaining to max N."
+)
     safety_gate_to_schedule = st.checkbox(
         "Apply safety decision only at scheduled safety looks",
         value=False,
