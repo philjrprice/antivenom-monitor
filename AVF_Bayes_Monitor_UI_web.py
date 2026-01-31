@@ -87,33 +87,31 @@ with st.sidebar.expander("Adaptive Timing & Look Points (Efficacy/Futility)", ex
         "Min N before first check", 1, max_n_val, 14,
         help="Burn-in period: No stop decisions will be made before this sample size."
     )
-    check_cohort = st.number_input(
-        "Check every X patients (Cohort)", 1, 20, 5,
-        help="Frequency of interim analysis (e.g., check data every 5 patients)."
-    )
-
-# --- Efficacy thresholds: interim vs final, and futility via PPoS floor ---
-
-    # Schedule mode selector for efficacy
     eff_schedule_mode = st.selectbox(
-        'Efficacy look schedule mode',
-        ['Check every X', 'Number of looks (equal spacing)', '% of remaining'],
-        index=0,
-        help='Choose how interim efficacy/futility looks are scheduled.'
+        "Efficacy look schedule",
+        ["Every N", "Number of looks (equal spacing)", "Custom % of remaining"], index=0,
+        help="Choose schedule type. Run-in is always included as the first look."
     )
-    eff_n_looks, eff_pct_remaining = None, None
-    if eff_schedule_mode == 'Number of looks (equal spacing)':
-        eff_n_looks = st.number_input(
-            'Efficacy: number of looks (incl. final)', 1, 50, 8, 1,
-            help='Total number of efficacy looks from run-in to max N (approximately equally spaced, includes run-in as 1st look).'
+    # Single 'value' control depending on selected mode
+    eff_value = None
+    if eff_schedule_mode == "Every N":
+        eff_value = st.number_input(
+            "Every N patients", 1, max(20, max_n_val), 5,
+            help="Check after every N patients following the run-in."
         )
-    elif eff_schedule_mode == '% of remaining':
-        eff_pct_remaining = st.slider(
-            'Efficacy: % of remaining sample per next look', 0.05, 0.50, 0.20, 0.01,
-            help='After run-in, schedule each next look after this fraction of the remaining sample accrues.'
+    elif eff_schedule_mode == "Number of looks (equal spacing)":
+        eff_value = st.number_input(
+            "Total number of looks (incl. final)", 1, 100, 8, 1,
+            help="Equally spaced looks from run-in to max N (includes run-in and final)."
+        )
+    else:  # Custom % of remaining
+        eff_value = st.text_input(
+            "Custom % of remaining (comma-separated)", "20,20,20,40",
+            help="Enter percentages like 20,20,20,40. Each value schedules the next look after that % of remaining to max N."
         )
 
 with st.sidebar.expander("Success & Futility Rules"):
+
     null_eff = st.slider(
         "Null Efficacy (p0) (%)", 0.1, 1.0, 0.50,
         help="The historical or placebo rate we must beat."
@@ -142,7 +140,7 @@ with st.sidebar.expander("Success & Futility Rules"):
 # --- Safety rules: independent safety prior, safety schedule, and gating toggle ---
 with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     safe_limit = st.slider(
-        "SAE Upper Limit (%)", 0.05, 0.50, 0.15,
+        "SAE Upper Limit (% )", 0.05, 0.50, 0.15,
         help="Maximum acceptable toxicity rate."
     )
     safe_conf_req = st.slider(
@@ -163,38 +161,35 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
         "Safety: Min N before first check", 1, max_n_val, min_interim,
         help="First safety look (often earlier than efficacy)."
     )
-    safety_check_cohort = st.number_input(
-        "Safety: Check every X patients", 1, 20, check_cohort,
-        help="Frequency of safety checks."
+    safety_schedule_mode = st.selectbox(
+        "Safety look schedule",
+        ["Every N", "Number of looks (equal spacing)", "Custom % of remaining"], index=0,
+        help="Choose schedule type. Run-in is always included as the first look."
     )
+    safety_value = None
+    if safety_schedule_mode == "Every N":
+        safety_value = st.number_input(
+            "Every N patients", 1, max(20, max_n_val), 5,
+            help="Check after every N patients following the run-in."
+        )
+    elif safety_schedule_mode == "Number of looks (equal spacing)":
+        safety_value = st.number_input(
+            "Total number of looks (incl. final)", 1, 100, 8, 1,
+            help="Equally spaced looks from run-in to max N (includes run-in and final)."
+        )
+    else:
+        safety_value = st.text_input(
+            "Custom % of remaining (comma-separated)", "20,20,20,40",
+            help="Enter percentages like 20,20,20,40. Each value schedules the next look after that % of remaining to max N."
+        )
     safety_gate_to_schedule = st.checkbox(
         "Apply safety decision only at scheduled safety looks",
         value=False,
         help="If unchecked, safety is monitored continuously (original behavior)."
     )
 
-# --- Sensitivity priors (efficacy) for robustness overlays ---
-
-    # Schedule mode selector for safety
-    safety_schedule_mode = st.selectbox(
-        'Safety look schedule mode',
-        ['Check every X', 'Number of looks (equal spacing)', '% of remaining'],
-        index=0,
-        help='Choose how safety looks are scheduled.'
-    )
-    safety_n_looks, safety_pct_remaining = None, None
-    if safety_schedule_mode == 'Number of looks (equal spacing)':
-        safety_n_looks = st.number_input(
-            'Safety: number of looks (incl. final)', 1, 50, 8, 1,
-            help='Total number of safety looks from run-in to max N (approximately equally spaced, includes run-in as 1st look).'
-        )
-    elif safety_schedule_mode == '% of remaining':
-        safety_pct_remaining = st.slider(
-            'Safety: % of remaining sample per next look', 0.05, 0.50, 0.20, 0.01,
-            help='After run-in, schedule each next look after this fraction of the remaining sample accrues.'
-        )
-
 with st.sidebar.expander("Sensitivity Priors (Adjustable) — Efficacy", expanded=True):
+
     st.caption("Define three efficacy priors (α, β) for sensitivity overlays.")
     eff1_a = st.number_input("Efficacy S1 α", 0.1, 20.0, 2.0, 0.1)
     eff1_b = st.number_input("Efficacy S1 β", 0.1, 20.0, 1.0, 0.1)
@@ -383,12 +378,22 @@ with ds1:
     st.markdown("**Efficacy (primary)**")
     st.write(f"Null p0: **{null_eff:.0%}** | Target p1: **{target_eff:.0%}** | Goal: **{dream_eff:.0%}**")
     st.write(f"Prior (α, β): **({prior_alpha:.1f}, {prior_beta:.1f})** → ESS **{prior_alpha+prior_beta:.1f}**")
-    st.write(f"Schedule: start at **N={min_interim}**, then **every {check_cohort}**")
+    sch_text_eff = (
+    f'run-in N={min_interim}, then every {eff_value}' if eff_schedule_mode=='Every N' else
+    f'run-in N={min_interim}, then {int(eff_value)} equally spaced looks to N={max_n_val}' if eff_schedule_mode=='Number of looks (equal spacing)' else
+    f'run-in N={min_interim}, then % remaining sequence [{eff_value}] to N={max_n_val}'
+)
+st.write(f'Schedule: {sch_text_eff}')
 with ds2:
     st.markdown("**Safety (binary SAE)**")
     st.write(f"Safety limit: **{safe_limit:.0%}** | Stop confidence: **{safe_conf_req:.0%}**")
     st.write(f"Prior (α, β): **({prior_alpha_saf:.1f}, {prior_beta_saf:.1f})** → ESS **{prior_alpha_saf+prior_beta_saf:.1f}**")
-    st.write(f"Schedule: start at **N={safety_min_interim}**, then **every {safety_check_cohort}**")
+    sch_text_saf = (
+    f'run-in N={safety_min_interim}, then every {safety_value}' if safety_schedule_mode=='Every N' else
+    f'run-in N={safety_min_interim}, then {int(safety_value)} equally spaced looks to N={max_n_val}' if safety_schedule_mode=='Number of looks (equal spacing)' else
+    f'run-in N={safety_min_interim}, then % remaining sequence [{safety_value}] to N={max_n_val}'
+)
+st.write(f'Schedule: {sch_text_saf}')
     st.write(f"Gating to schedule: **{'ON' if safety_gate_to_schedule else 'OFF'}**")
 with ds3:
     st.markdown("**Decision & Simulation settings**")
@@ -437,9 +442,17 @@ elif is_efficacy_look or is_final_look:
 elif total_n < min_interim:
     st.info(f"⏳ **STATUS: LEAD-IN.** Enrollment phase; first efficacy check at N={min_interim}.")
 else:
-    next_check = total_n + (check_cohort - (total_n - min_interim) % check_cohort)
-    next_safety = total_n + (safety_check_cohort - (total_n - safety_min_interim) % safety_check_cohort)
-    st.info(f"🧬 **STATUS: MONITORING.** Next efficacy check at N={next_check}; next safety check at N={next_safety}.")
+    # Determine upcoming scheduled looks from the constructed schedules
+    next_check = next((n for n in look_points if n > total_n), None)
+    next_safety = next((n for n in safety_look_points if n > total_n), None)
+    if next_check and next_safety:
+        st.info(f'🧬 **STATUS: MONITORING.** Next efficacy check at N={next_check}; next safety check at N={next_safety}.')
+    elif next_check and not next_safety:
+        st.info(f'🧬 **STATUS: MONITORING.** Next efficacy check at N={next_check}; no further safety looks scheduled.')
+    elif next_safety and not next_check:
+        st.info(f'🧬 **STATUS: MONITORING.** Next safety check at N={next_safety}; no further efficacy looks scheduled.')
+    else:
+        st.info('🧬 **STATUS: MONITORING.** No further scheduled looks; decisions occur only at final.')
     # Show next-look thresholds explicitly for review clarity
     try:
         succ_req_next = success_boundary(
@@ -476,11 +489,15 @@ else:
 # ==============================================================
 st.subheader("📈 Trial Decision Corridors")
 # Build canonical look points from the schedule definitions
-look_points = [min_interim + (i * check_cohort) for i in range(100) if (min_interim + (i * check_cohort)) <= max_n_val]
+look_points = build_looks(
+    max_n_val, min_interim, eff_schedule_mode, eff_value,
+    is_pct_list=(eff_schedule_mode=='Custom % of remaining')
+)
 viz_n = np.array(look_points)
-
-safety_look_points = [safety_min_interim + (i * safety_check_cohort)
-                      for i in range(100) if (safety_min_interim + (i * safety_check_cohort)) <= max_n_val]
+safety_look_points = build_looks(
+    max_n_val, safety_min_interim, safety_schedule_mode, safety_value,
+    is_pct_list=(safety_schedule_mode=='Custom % of remaining')
+)
 viz_n_safety = np.array(safety_look_points)
 
 # Compute success and futility boundaries across efficacy looks
