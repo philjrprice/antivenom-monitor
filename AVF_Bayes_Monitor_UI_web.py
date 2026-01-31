@@ -96,19 +96,19 @@ with st.sidebar.expander("Adaptive Timing & Look Points (Efficacy/Futility)", ex
     eff_value = None
     if eff_schedule_mode == "Every N":
         eff_value = st.number_input(
-            "Every N patients", 1, max(20, max_n_val), 5,
+        \"Every N patients\", 1, max(20, max_n_val, key='eff_every_n'), 5,
             help="Check after every N patients following the run-in."
         )
     elif eff_schedule_mode == "Number of looks (equal spacing)":
         eff_value = st.number_input(
-            "Total number of looks (incl. final)", 1, 100, 8, 1,
-            help="Equally spaced looks from run-in to max N (includes run-in and final)."
+        \"Total number of looks (incl. final)\", 1, 100, 8, 1,
+            help="Equally spaced looks from run-in to max N (includes run-in and final, key='eff_nlooks')."
         )
     else:  # Custom % of remaining
         eff_value = st.text_input(
-            "Custom % of remaining (comma-separated)", "20,20,20,40",
+        \"Custom % of remaining (comma-separated)\", "20,20,20,40",
             help="Enter percentages like 20,20,20,40. Each value schedules the next look after that % of remaining to max N."
-        )
+        , key='eff_pctseq')
 
 with st.sidebar.expander("Success & Futility Rules"):
 
@@ -169,19 +169,19 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     safety_value = None
     if safety_schedule_mode == "Every N":
         safety_value = st.number_input(
-            "Every N patients", 1, max(20, max_n_val), 5,
+        \"Every N patients\", 1, max(20, max_n_val, key='saf_every_n'), 5,
             help="Check after every N patients following the run-in."
         )
     elif safety_schedule_mode == "Number of looks (equal spacing)":
         safety_value = st.number_input(
-            "Total number of looks (incl. final)", 1, 100, 8, 1,
-            help="Equally spaced looks from run-in to max N (includes run-in and final)."
+        \"Total number of looks (incl. final)\", 1, 100, 8, 1,
+            help="Equally spaced looks from run-in to max N (includes run-in and final, key='saf_nlooks')."
         )
     else:
         safety_value = st.text_input(
-            "Custom % of remaining (comma-separated)", "20,20,20,40",
+        \"Custom % of remaining (comma-separated)\", "20,20,20,40",
             help="Enter percentages like 20,20,20,40. Each value schedules the next look after that % of remaining to max N."
-        )
+        , key='saf_pctseq')
     safety_gate_to_schedule = st.checkbox(
         "Apply safety decision only at scheduled safety looks",
         value=False,
@@ -394,7 +394,7 @@ with ds2:
     f'run-in N={safety_min_interim}, then % remaining sequence [{safety_value}] to N={max_n_val}'
 )
 st.write(f'Schedule: {sch_text_saf}')
-st.write(f"Gating to schedule: **{'ON' if safety_gate_to_schedule else 'OFF'}**")
+    st.write(f"Gating to schedule: **{'ON' if safety_gate_to_schedule else 'OFF'}**")
 with ds3:
     st.markdown("**Decision & Simulation settings**")
     st.write(f"Interim success threshold: **{success_conf_req_interim:.0%}**")
@@ -1327,4 +1327,3 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
-
