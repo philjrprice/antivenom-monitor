@@ -367,11 +367,7 @@ bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
 
 # ============== Build look schedules now (helper + construction) ==============
 
-def build_looks(max_n_val: int,
-                first_look_n: int,
-                mode: str,
-                value,
-                is_pct_list: bool = False):
+def build_looks(max_n_val: int, first_look_n: int, mode: str, value, is_pct_list: bool = False):
     # Returns sorted list of N values at which to perform looks.
     # Always includes first_look_n and max_n_val.
     looks = set()
@@ -1392,6 +1388,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
+
 
 
 
