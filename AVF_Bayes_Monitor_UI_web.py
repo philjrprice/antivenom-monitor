@@ -570,7 +570,7 @@ viz_n_safety = np.array(safety_look_points)
 succ_line, fut_line = [], []
 for lp in viz_n:
     use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
-    s_req = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+    s_req = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
     f_req = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
                                    prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
     succ_line.append(s_req)
@@ -880,13 +880,13 @@ if st.button(f"Calculate Sequential Type I Error ({typei_sims:,} sims)"):
             else:
                 safety_check_set = set(range(1, max_n_val + 1))
             # Precompute thresholds
-            succ_req_sim = dict(succ_req_by_n)
+            succ_req_sim = {}
             futi_max_sim = dict(futi_max_by_n)
             safety_req_sim = dict(safety_req_by_n)
             for lp in eff_looks:
                 use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
                 if lp not in succ_req_sim:
-                    succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+                    succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
                 if lp != max_n_val and (lp not in futi_max_sim):
                     futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
                                                              prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
@@ -955,13 +955,13 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
     else:
         safety_check_set = set(range(1, max_n_val + 1))
     # Precompute thresholds if needed
-    succ_req_sim = dict(succ_req_by_n)
+    succ_req_sim = {}
     futi_max_sim = dict(futi_max_by_n)
     safety_req_sim = dict(safety_req_by_n)
     for lp in eff_looks:
         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
         if lp not in succ_req_sim:
-            succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+            succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
         if lp != max_n_val and (lp not in futi_max_sim):
             futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
                                                       prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
@@ -1189,13 +1189,13 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
     safety_check_set = safety_check_set_sched if oc_use_saf_looks else safety_check_set_cont
 
     # Threshold caches
-    succ_req_sim = dict(succ_req_by_n)
+    succ_req_sim = {}
     futi_max_sim = dict(futi_max_by_n)
     safety_req_sim = dict(safety_req_by_n)
     for lp in eff_looks:
         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
         if lp not in succ_req_sim:
-            succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+            succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
         if lp != max_n_val and (lp not in futi_max_sim):
             futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
                                                       prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
@@ -1327,7 +1327,7 @@ with st.expander("📋 Regulatory Decision Boundary Tables", expanded=True):
         if lp <= total_n:
             continue
         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
-        s_req = success_boundary(lp, prior_alpha, prior_beta, target_eff, use_conf)
+        s_req = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
         f_req = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
                                        prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
         boundary_data_eff.append({
