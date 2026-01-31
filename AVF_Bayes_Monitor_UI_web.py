@@ -132,7 +132,7 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     st.markdown("**Safety Priors (independent from efficacy):**")
     prior_alpha_saf = st.slider(
         "Safety Prior Successes (Alpha_safety)", 0.1, 10.0, 1.0, step=0.1,
-        help="Initial belief strength for toxicity: equivalent 'phantom' toxic events."
+        help="Initial belief strength for toxicity: prior pseudo-count of toxic events (α)."
     )
     prior_beta_saf = st.slider(
         "Safety Prior Failures (Beta_safety)", 0.1, 10.0, 1.0, step=0.1,
@@ -655,6 +655,61 @@ fig_sens_bars.update_layout(height=420, margin=dict(t=20, b=0))
 st.plotly_chart(fig_sens_bars, use_container_width=True)
 
 # ==============================================================
+
+st.subheader("🧪 Safety Sensitivity & Robustness (with Bayes Factors)")
+# Build safety sensitivity prior list
+saf_sens_list = [
+    (f"Safety S1 (α={saf1_a:.1f}, β={saf1_b:.1f})", saf1_a, saf1_b, "#e74c3c"),
+    (f"Safety S2 (α={saf2_a:.1f}, β={saf2_b:.1f})", saf2_a, saf2_b, "#2c3e50"),
+    (f"Safety S3 (α={saf3_a:.1f}, β={saf3_b:.1f})", saf3_a, saf3_b, "#8e44ad"),
+]
+s_cols, saf_target_probs = st.columns(3), []
+saf_rows = []
+for i, (name, ap, bp, color) in enumerate(saf_sens_list):
+    as_ = ap + saes
+    bs_ = bp + (total_n - saes)
+    m_saf = as_ / (as_ + bs_)
+    p_gt_lim = 1 - beta.cdf(safe_limit, as_, bs_)  # Pr(toxicity > limit)
+    p_lt_lim = beta.cdf(safe_limit, as_, bs_)     # Pr(toxicity <= limit)
+    bf10_s = bayes_factor_point_null(saes, total_n, ap, bp, safe_limit)
+    saf_target_probs.append(p_gt_lim)
+    saf_rows.append({
+        'Prior': name, 'color': color, 'a': as_, 'b': bs_,
+        'MeanTox': m_saf, 'P>ToxLimit': p_gt_lim, 'P≤ToxLimit': p_lt_lim, 'BF10_vs_point_limit': bf10_s
+    })
+    with s_cols[i]:
+        st.info(f"**{name}**")
+        st.write(f"Mean Toxicity: **{m_saf:.1%}**")
+        st.write(f"Prob > Limit: **{p_gt_lim:.1%}**")
+        st.write(f"Prob ≤ Limit: **{p_lt_lim:.1%}**")
+        bf_s = f"{bf10_s:.2e}" if (bf10_s >= 1e4 or bf10_s <= 1e-4) else f"{bf10_s:.2f}"
+        st.write(f"Bayes Factor BF₁₀ (Alt vs point at limit): **{bf_s}**")
+st.caption("Interpretation: larger P>limit suggests higher safety risk; BF₁₀>1 favors the alternative vs a point null at the safety limit.")
+# PDFs overlay
+st.subheader("🏛️ Safety Sensitivity: Posterior Distributions")
+x_grid_s = np.linspace(0, 1, 600)
+fig_sens_s_pdf = go.Figure()
+for row in saf_rows:
+    fig_sens_s_pdf.add_trace(go.Scatter(
+        x=x_grid_s, y=beta.pdf(x_grid_s, row['a'], row['b']),
+        name=row['Prior'], line=dict(width=3, color=row['color'])
+    ))
+fig_sens_s_pdf.add_vline(x=safe_limit, line_dash='dash', line_color='black', annotation_text='Safety limit')
+fig_sens_s_pdf.update_layout(xaxis_title='Toxicity rate', yaxis_title='Posterior density', height=420, margin=dict(t=20,b=0))
+st.plotly_chart(fig_sens_s_pdf, use_container_width=True)
+# Bars for P>limit and P<=limit
+st.subheader("🏛️ Safety Sensitivity: Key Probabilities by Prior")
+sprob_df = pd.DataFrame([{
+    'Prior': r['Prior'], 'P>ToxLimit': r['P>ToxLimit'], 'P≤ToxLimit': r['P≤ToxLimit']
+} for r in saf_rows])
+sprob_long = sprob_df.melt(id_vars='Prior', var_name='Metric', value_name='Probability')
+fig_sens_s_bars = px.bar(sprob_long, x='Prior', y='Probability', color='Metric', barmode='group', text='Probability',
+    color_discrete_map={'P>ToxLimit':'#c0392b','P≤ToxLimit':'#27ae60'})
+fig_sens_s_bars.update_traces(texttemplate='%{text:.1%}', textposition='outside')
+fig_sens_s_bars.update_yaxes(tickformat='.0%')
+fig_sens_s_bars.update_layout(height=420, margin=dict(t=20,b=0))
+st.plotly_chart(fig_sens_s_bars, use_container_width=True)
+
 # 9. DESIGN INTEGRITY CHECK — Sequential Type I Error (with toggles)
 #    Simulates trials under H0 (p_eff=p0) and user-defined safety rate.
 # ==============================================================
