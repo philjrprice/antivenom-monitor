@@ -391,7 +391,7 @@ def safety_stop_threshold(lp: int, prior_alpha_saf: float, prior_beta_saf: float
     return None
 
 @st.cache_data
-def futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_final,
+def futility_boundary_ppos(lp, max_n_val, null_eff, success_conf_final,
                            prior_alpha, prior_beta, draws, seed, futility_floor):
     """Largest S at look size lp where PPoS(final) <= futility_floor. Monotone-corrected."""
     ppos_by_S = np.empty(lp + 1, dtype=float)
@@ -416,8 +416,7 @@ def wilson_ci(k, n, alpha=0.05):
     return (max(0.0, center - halfwidth), min(1.0, center + halfwidth))
 
 # --- Run forecasting for current state (uses FINAL success threshold) ---
-bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
-    successes, total_n, max_n_val, target_eff, success_conf_req_final, prior_alpha, prior_beta, mc_draws, mc_seed)
+bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts( successes, total_n, max_n_val, null_eff, success_conf_req_final, prior_alpha, prior_beta, mc_draws, mc_seed)
 
 
 # Build efficacy and safety look schedules and sets
@@ -522,11 +521,11 @@ else:
     # Show next-look thresholds explicitly for review clarity
     try:
         succ_req_next = success_boundary(
-            next_check, prior_alpha, prior_beta, target_eff,
+ next_check, prior_alpha, prior_beta, null_eff,
             success_conf_req_final if (next_check == max_n_val) else success_conf_req_interim
         )
         futi_req_next = futility_boundary_ppos(
-            next_check, max_n_val, target_eff, success_conf_req_final,
+            next_check, max_n_val, null_eff, success_conf_req_final,
             prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit
         )
         succ_txt = (f"Success Stop if S ≥ {succ_req_next}" if succ_req_next is not None else "No success stop at that look")
@@ -571,7 +570,7 @@ succ_line, fut_line = [], []
 for lp in viz_n:
     use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
     s_req = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
-    f_req = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+    f_req = futility_boundary_ppos(lp, max_n_val, null_eff, success_conf_req_final,
                                    prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
     succ_line.append(s_req)
     fut_line.append(max(0, f_req) if f_req >= 0 else -1)
@@ -888,7 +887,7 @@ if st.button(f"Calculate Sequential Type I Error ({typei_sims:,} sims)"):
                 if lp not in succ_req_sim:
                     succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
                 if lp != max_n_val and (lp not in futi_max_sim):
-                    futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+                    futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, null_eff, success_conf_req_final,
                                                              prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
             for lp in saf_looks:
                 if lp not in safety_req_sim:
@@ -963,7 +962,7 @@ def simulate_power_once(p_true_eff, p_true_saf, sims, seed,
         if lp not in succ_req_sim:
             succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
         if lp != max_n_val and (lp not in futi_max_sim):
-            futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+            futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, null_eff, success_conf_req_final,
                                                       prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
     for lp in saf_looks:
         if lp not in safety_req_sim:
@@ -1197,7 +1196,7 @@ if st.button("▶️ Run Adaptive Scenario Suite (OC)"):
         if lp not in succ_req_sim:
             succ_req_sim[lp] = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
         if lp != max_n_val and (lp not in futi_max_sim):
-            futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+            futi_max_sim[lp] = futility_boundary_ppos(lp, max_n_val, null_eff, success_conf_req_final,
                                                       prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
     for lp in saf_looks:
         if lp not in safety_req_sim:
@@ -1328,7 +1327,7 @@ with st.expander("📋 Regulatory Decision Boundary Tables", expanded=True):
             continue
         use_conf = success_conf_req_final if (lp == max_n_val) else success_conf_req_interim
         s_req = success_boundary(lp, prior_alpha, prior_beta, null_eff, use_conf)
-        f_req = futility_boundary_ppos(lp, max_n_val, target_eff, success_conf_req_final,
+        f_req = futility_boundary_ppos(lp, max_n_val, null_eff, success_conf_req_final,
                                        prior_alpha, prior_beta, mc_draws, mc_seed, bpp_futility_limit)
         boundary_data_eff.append({
             "N (eff)": lp,
