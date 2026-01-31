@@ -417,7 +417,7 @@ def wilson_ci(k, n, alpha=0.05):
 
 # --- Run forecasting for current state (uses FINAL success threshold) ---
 bpp, ps_range, bpp_se, bpp_ci_low, bpp_ci_high = get_enhanced_forecasts(
-    successes, total_n, max_n_val, target_eff, success_conf_req_final, prior_alpha, prior_beta, mc_draws, mc_seed
+    successes, total_n, max_n_val, target_eff, success_conf_req_final, prior_alpha, prior_beta, mc_draws, mc_seed)
 
 
 # Build efficacy and safety look schedules and sets
@@ -1394,6 +1394,7 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
+
 
 
 
