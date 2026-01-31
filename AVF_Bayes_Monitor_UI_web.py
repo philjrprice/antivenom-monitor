@@ -93,6 +93,26 @@ with st.sidebar.expander("Adaptive Timing & Look Points (Efficacy/Futility)", ex
     )
 
 # --- Efficacy thresholds: interim vs final, and futility via PPoS floor ---
+
+    # Schedule mode selector for efficacy
+    eff_schedule_mode = st.selectbox(
+        'Efficacy look schedule mode',
+        ['Check every X', 'Number of looks (equal spacing)', '% of remaining'],
+        index=0,
+        help='Choose how interim efficacy/futility looks are scheduled.'
+    )
+    eff_n_looks, eff_pct_remaining = None, None
+    if eff_schedule_mode == 'Number of looks (equal spacing)':
+        eff_n_looks = st.number_input(
+            'Efficacy: number of looks (incl. final)', 1, 50, 8, 1,
+            help='Total number of efficacy looks from run-in to max N (approximately equally spaced, includes run-in as 1st look).'
+        )
+    elif eff_schedule_mode == '% of remaining':
+        eff_pct_remaining = st.slider(
+            'Efficacy: % of remaining sample per next look', 0.05, 0.50, 0.20, 0.01,
+            help='After run-in, schedule each next look after this fraction of the remaining sample accrues.'
+        )
+
 with st.sidebar.expander("Success & Futility Rules"):
     null_eff = st.slider(
         "Null Efficacy (p0) (%)", 0.1, 1.0, 0.50,
@@ -131,12 +151,12 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     )
     st.markdown("**Safety Priors (independent from efficacy):**")
     prior_alpha_saf = st.slider(
-        "Safety Prior Successes (Alpha_safety)", 0.1, 10.0, 1.0, step=0.1,
-        help="Initial belief strength for toxicity: prior pseudo-count of toxic events (α)."
+        "Safety prior α (toxic events)", 0.1, 10.0, 1.0, step=0.1,
+        help="Prior pseudo-count for toxic events (α)."
     )
     prior_beta_saf = st.slider(
-        "Safety Prior Failures (Beta_safety)", 0.1, 10.0, 1.0, step=0.1,
-        help="Initial belief strength for toxicity: equivalent 'phantom' non-toxic outcomes."
+        "Safety prior β (non-toxic)", 0.1, 10.0, 1.0, step=0.1,
+        help="Prior pseudo-count for non-toxic outcomes (β)."
     )
     st.markdown("**Safety Look Schedule (optional; defaults preserve original behavior):**")
     safety_min_interim = st.number_input(
@@ -154,6 +174,26 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
     )
 
 # --- Sensitivity priors (efficacy) for robustness overlays ---
+
+    # Schedule mode selector for safety
+    safety_schedule_mode = st.selectbox(
+        'Safety look schedule mode',
+        ['Check every X', 'Number of looks (equal spacing)', '% of remaining'],
+        index=0,
+        help='Choose how safety looks are scheduled.'
+    )
+    safety_n_looks, safety_pct_remaining = None, None
+    if safety_schedule_mode == 'Number of looks (equal spacing)':
+        safety_n_looks = st.number_input(
+            'Safety: number of looks (incl. final)', 1, 50, 8, 1,
+            help='Total number of safety looks from run-in to max N (approximately equally spaced, includes run-in as 1st look).'
+        )
+    elif safety_schedule_mode == '% of remaining':
+        safety_pct_remaining = st.slider(
+            'Safety: % of remaining sample per next look', 0.05, 0.50, 0.20, 0.01,
+            help='After run-in, schedule each next look after this fraction of the remaining sample accrues.'
+        )
+
 with st.sidebar.expander("Sensitivity Priors (Adjustable) — Efficacy", expanded=True):
     st.caption("Define three efficacy priors (α, β) for sensitivity overlays.")
     eff1_a = st.number_input("Efficacy S1 α", 0.1, 20.0, 2.0, 0.1)
