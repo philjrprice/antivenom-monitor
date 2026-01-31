@@ -173,7 +173,7 @@ with st.sidebar.expander("Safety Rules, Priors & Timing", expanded=True):
  help="Check after every N patients following the run-in."
         )
     elif safety_schedule_mode == "Number of looks (equal spacing)":
-    safety_value = st.number_input(
+         safety_value = st.number_input(
         "Total number of looks (incl. final)", 1, 100, 8, 1, key='saf_nlooks',
         help="Equally spaced looks from run-in to max N (includes run-in and final)."
     )
@@ -1327,3 +1327,4 @@ if st.button("📥 Prepare Audit-Ready Snapshot"):
         mime='text/csv'
     )
     st.table(df_report)
+
